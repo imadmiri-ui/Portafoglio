@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Portafoglio Tangem</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0E1826">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F2F5F8;--surface:#FFFFFF;--line:#DCE3EA;--text:#10202F;--muted:#5F7285;
+  --accent:#1F6FB2;--up:#1A8F63;--down:#C8414B;--soft:#E6ECF2;--warn:#C98A12;
+  color-scheme:light dark;box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1826;--surface:#152335;--line:#223449;--text:#E4ECF4;--muted:#8497AB;
+    --accent:#6CB6E8;--up:#3DC48E;--down:#F0707A;--soft:#1B2C42;--warn:#E3AE45;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1826;--surface:#152335;--line:#223449;--text:#E4ECF4;--muted:#8497AB;
+  --accent:#6CB6E8;--up:#3DC48E;--down:#F0707A;--soft:#1B2C42;--warn:#E3AE45;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+img{max-width:100%}
+.wrap{max-width:720px;margin:0 auto;padding:0 16px}
+.m{color:var(--muted)} .small{font-size:12.5px}
+.up{color:var(--up)} .down{color:var(--down)}
+h1{font-size:22px;margin:0;font-weight:600}
+h2{font-size:16px;margin:0 0 10px;font-weight:600}
+section{margin-top:26px}
+
+/* Saldo sempre visibile */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+.top-in{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;padding-top:14px}
+.total{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;font-weight:600;font-size:clamp(34px,10vw,52px);line-height:1;letter-spacing:-.01em}
+.top-side{text-align:right;font-size:13.5px;line-height:1.5}
+.partial{color:var(--warn);font-size:12.5px;margin-top:4px}
+.status{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);padding-top:8px;padding-bottom:10px}
+.status #status{flex:1;min-width:0}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.dot.ok{background:var(--up)}.dot.err{background:var(--down)}.dot.warn{background:var(--warn)}.dot.load{background:var(--accent)}
+.link{background:none;border:0;color:var(--accent);padding:6px 0;font-weight:500}
+
+/* Home */
+.alloc{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.alloc svg{width:148px;height:148px;flex:none}
+.legend{flex:1;min-width:170px;margin:0;padding:0;list-style:none;font-size:14px}
+.legend li{display:flex;align-items:center;gap:8px;padding:3px 0}
+.sw{width:10px;height:10px;border-radius:2px;flex:none}
+.legend .w{margin-left:auto;color:var(--muted)}
+.list{border-top:1px solid var(--line)}
+.row{display:grid;grid-template-columns:34px 1fr auto;gap:12px;align-items:center;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:12px 2px}
+.row img,.ph{width:34px;height:34px;border-radius:50%;background:var(--soft);display:block}
+.n{font-weight:600}.s{color:var(--muted);font-size:13px}
+.r{text-align:right}
+.empty{padding:28px 0;color:var(--muted)}
+.primary{background:var(--accent);color:var(--bg);border:0;border-radius:10px;padding:12px 16px;font-weight:600;width:100%;margin-top:14px}
+.ghost{background:none;border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+.danger{background:none;border:1px solid var(--down);color:var(--down);border-radius:10px;padding:11px 16px;width:100%;margin-top:26px}
+.tools{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+.tools .ghost{flex:1}
+footer{margin:28px 0 36px}
+
+/* Dettaglio */
+.dh{display:flex;align-items:center;gap:12px;margin-top:6px}
+.dh img{width:40px;height:40px;border-radius:50%}
+.price{margin-top:12px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.price .big{font-size:28px;font-weight:600}
+.ranges{display:flex;gap:6px;margin-top:14px;flex-wrap:wrap}
+.ranges button{background:none;border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:14px}
+.ranges button[aria-pressed="true"]{background:var(--text);color:var(--bg);border-color:var(--text)}
+.tip{font-size:13px;color:var(--muted);min-height:20px;margin-top:10px}
+.chart{height:230px;margin-top:4px}
+.chart svg{display:block;width:100%;height:230px;touch-action:pan-y}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px 18px;margin:0}
+.kv dt{color:var(--muted);font-size:12.5px}
+.kv dd{margin:2px 0 0;font-weight:500}
+.lots{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.lots li{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+.lots .del{background:none;border:0;color:var(--down);padding:4px 0;font-size:13.5px}
+
+/* Modulo */
+.sheet{position:fixed;inset:0;z-index:20;background:rgba(5,12,20,.5);display:flex;align-items:flex-end;justify-content:center}
+.sheet[hidden]{display:none}
+.card{background:var(--surface);width:100%;max-width:720px;max-height:92%;overflow:auto;border-radius:16px 16px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom,0px))}
+.card label,.card fieldset{display:block;margin-top:14px}
+.card fieldset{border:0;padding:0}
+.card legend{padding:0;margin-bottom:6px}
+.inp{display:block;width:100%;margin-top:6px;padding:11px 12px;font:16px "IBM Plex Sans",system-ui,sans-serif;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:8px}
+.seg{display:flex;gap:8px}
+.seg label{margin:0;flex:1;border:1px solid var(--line);border-radius:8px;padding:10px;display:flex;gap:8px;align-items:center;font-size:14px}
+.results{margin-top:6px}
+.res{display:grid;grid-template-columns:24px 1fr auto;gap:10px;align-items:center;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:9px 2px}
+.res img{width:24px;height:24px;border-radius:50%}
+.picked{display:flex;align-items:center;gap:10px;margin-top:14px;padding:10px;border:1px solid var(--line);border-radius:8px}
+.picked img{width:28px;height:28px;border-radius:50%}
+.picked .grow{flex:1;min-width:0}
+.preview{font-size:13.5px;color:var(--muted);margin-top:10px;min-height:20px}
+.err{color:var(--down);font-size:14px;min-height:20px;margin:10px 0 0}
+.actions{display:flex;gap:10px;margin-top:8px}
+.actions button{flex:1;margin-top:0}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap top-in">
+    <div>
+      <div class="m small">Saldo in tempo reale</div>
+      <div id="total" class="total">€0,00</div>
+      <div id="partial" class="partial" hidden></div>
+    </div>
+    <div class="top-side">
+      <div id="pnl"></div>
+      <div id="chg24"></div>
+    </div>
+  </div>
+  <div class="wrap status">
+    <span id="dot" class="dot"></span><span id="status">Avvio…</span>
+    <button id="refresh" class="link" type="button">Aggiorna</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="home">
+    <section id="alloc" hidden>
+      <h2>Ripartizione</h2>
+      <div class="alloc"><div id="donut"></div><ul id="legend" class="legend"></ul></div>
+    </section>
+    <section>
+      <h2>Token</h2>
+      <div id="list" class="list"></div>
+      <button id="add" class="primary" type="button">Aggiungi acquisto</button>
+    </section>
+    <footer>
+      <div class="tools">
+        <button id="exp" class="ghost" type="button">Esporta backup</button>
+        <label class="ghost" style="text-align:center;cursor:pointer">Importa backup<input id="impFile" type="file" accept="application/json,.json" hidden></label>
+      </div>
+      <p class="m small">Prezzi in euro da CoinGecko (API pubblica), aggiornati ogni 60 secondi mentre la pagina è aperta. I dati del portafoglio restano solo su questo dispositivo: esporta un backup dopo ogni modifica importante.</p>
+    </footer>
+  </div>
+  <div id="detail" hidden></div>
+</main>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="card" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <h2 id="sheetTitle">Aggiungi acquisto</h2>
+    <div id="qwrap">
+      <label>Token<input id="q" class="inp" autocomplete="off" placeholder="Nome o simbolo, es. solana"></label>
+      <div id="results" class="results"></div>
+    </div>
+    <div id="picked" class="picked" hidden></div>
+    <label>Quantità<input id="qty" class="inp" inputmode="decimal" autocomplete="off" placeholder="Es. 12,5"></label>
+    <fieldset>
+      <legend>Costo di entrata</legend>
+      <div class="seg">
+        <label><input type="radio" name="cm" value="unit" checked> Prezzo per unità</label>
+        <label><input type="radio" name="cm" value="total"> Costo totale</label>
+      </div>
+    </fieldset>
+    <label><span id="costLbl">Prezzo per unità in euro</span><input id="cost" class="inp" inputmode="decimal" autocomplete="off" placeholder="Es. 142,30"></label>
+    <label>Data di acquisto<input id="date" class="inp" type="date"></label>
+    <div id="preview" class="preview"></div>
+    <p id="formErr" class="err" role="alert"></p>
+    <div class="actions">
+      <button type="button" id="cancel" class="ghost">Annulla</button>
+      <button type="button" id="saveLot" class="primary">Salva acquisto</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+const API='https://api.coingecko.com/api/v3';
+const CCY='eur';
+const KEY='tangem-portfolio-v1';
+const REFRESH_MS=60000;
+const CHART_TTL=300000;
+const COLORS=['#1F6FB2','#2BA88A','#D9A02B','#8E5CC4','#D2594E','#3AA7C9'];
+const OTHER='#8497AB';
+const $=s=>document.querySelector(s);
+
+let state={version:1,holdings:{}};
+let market={}, lastOk=0, backoffUntil=0, busy=false, storageOk=true;
+const view={screen:'home',id:null,days:'7'};
+let lastChart=null;
+const chartCache={};
+
+/* ---------- formattazione ---------- */
+const nfC=new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR'});
+const nfCs=new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR',minimumSignificantDigits:2,maximumSignificantDigits:4});
+const nfCc=new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR',notation:'compact',maximumFractionDigits:2});
+const nfQ=new Intl.NumberFormat('it-IT',{maximumFractionDigits:8});
+const nfP=new Intl.NumberFormat('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2});
+const ok=v=>typeof v==='number'&&isFinite(v);
+const eur=v=>!ok(v)?'—':((Math.abs(v)>0&&Math.abs(v)<1)?nfCs:nfC).format(v);
+const eurS=v=>!ok(v)?'—':(v>0?'+':'')+eur(v);
+const eurC=v=>!ok(v)?'—':nfCc.format(v);
+const pct=v=>!ok(v)?'—':(v>0?'+':'')+nfP.format(v)+'%';
+const qf=v=>!ok(v)?'—':nfQ.format(v);
+const cls=v=>!ok(v)?'':v>0?'up':v<0?'down':'';
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const safeImg=u=>(typeof u==='string'&&/^https:\/\//.test(u))?u:'';
+const clock=t=>new Date(t).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+const dIt=s=>{if(!s)return 'senza data';const d=new Date(s);return isNaN(d)?'senza data':d.toLocaleDateString('it-IT',{day:'2-digit',month:'2-digit',year:'numeric'});};
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const pad=n=>String(n).padStart(2,'0');
+const localDate=()=>{const d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());};
+const sym=h=>String(h.symbol||'').toUpperCase();
+
+/* Accetta "0,5", "0.5", "1.234,56". Con solo il punto, il punto è il separatore decimale. */
+function parseNum(s){
+  s=String(s||'').trim().replace(/[\s€]/g,'');
+  if(!s) return NaN;
+  if(s.includes(',')&&s.includes('.')) s=s.replace(/\./g,'').replace(',','.');
+  else s=s.replace(',','.');
+  if(!/^(\d+\.?\d*|\.\d+)$/.test(s)) return NaN;
+  return parseFloat(s);
+}
+
+/* ---------- memoria locale ---------- */
+function valid(s){
+  if(!s||typeof s!=='object'||!s.holdings||typeof s.holdings!=='object') return false;
+  return Object.entries(s.holdings).every(([k,h])=>h&&h.id===k&&typeof h.name==='string'&&Array.isArray(h.lots)&&
+    h.lots.every(l=>l&&ok(l.qty)&&l.qty>0&&ok(l.unit)&&l.unit>=0));
+}
+function load(){
+  try{
+    const raw=localStorage.getItem(KEY);
+    if(raw){const s=JSON.parse(raw); if(valid(s)) state={version:1,holdings:s.holdings};}
+    const mk=localStorage.getItem(KEY+'-mkt');
+    if(mk){const o=JSON.parse(mk); if(o&&o.m&&typeof o.m==='object'){market=o.m; lastOk=o.t||0;}}
+  }catch(e){storageOk=false;}
+}
+function save(){
+  try{localStorage.setItem(KEY,JSON.stringify(state));return true;}
+  catch(e){storageOk=false;return false;}
+}
+
+/* ---------- rete ---------- */
+async function getJSON(url){
+  const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),15000);
+  try{
+    const r=await fetch(url,{signal:ctl.signal,headers:{accept:'application/json'}});
+    if(!r.ok){const e=new Error('HTTP '+r.status); e.code=r.status; throw e;}
+    return await r.json();
+  }catch(e){
+    if(e.name==='AbortError'){const x=new Error('timeout'); x.code='timeout'; throw x;}
+    throw e;
+  }finally{clearTimeout(t);}
+}
+const staleNote=()=>lastOk?'. Ultimo prezzo valido: '+clock(lastOk):'';
+function setStatus(kind,msg){$('#dot').className='dot '+kind; $('#status').textContent=msg;}
+
+async function refreshMarket(){
+  const ids=Object.keys(state.holdings);
+  if(!ids.length){setStatus('','Nessun token da aggiornare'); render(); return;}
+  if(busy) return;
+  if(Date.now()<backoffUntil){setStatus('warn','Limite richieste CoinGecko: attendo prima di riprovare'+staleNote()); return;}
+  busy=true; setStatus('load','Aggiornamento prezzi…');
+  try{
+    const m={};
+    for(let i=0;i<ids.length;i+=200){
+      const chunk=ids.slice(i,i+200);
+      const rows=await getJSON(`${API}/coins/markets?vs_currency=${CCY}&ids=${encodeURIComponent(chunk.join(','))}&per_page=250&page=1&price_change_percentage=1h,24h,7d,30d,1y`);
+      if(!Array.isArray(rows)) throw new Error('risposta inattesa');
+      rows.forEach(r=>{if(r&&r.id) m[r.id]=r;});
+    }
+    market=m; lastOk=Date.now();
+    try{localStorage.setItem(KEY+'-mkt',JSON.stringify({t:lastOk,m}));}catch(e){}
+    const missing=ids.filter(id=>!m[id]);
+    if(missing.length) setStatus('warn',`Aggiornato alle ${clock(lastOk)}. Senza prezzo: ${missing.map(id=>sym(state.holdings[id])||id).join(', ')}`);
+    else setStatus('ok',`Aggiornato alle ${clock(lastOk)}`);
+  }catch(e){
+    if(e.code===429){backoffUntil=Date.now()+90000; setStatus('warn','Limite richieste CoinGecko raggiunto, nuovo tentativo tra 90 secondi'+staleNote());}
+    else setStatus('err','Aggiornamento non riuscito ('+e.message+')'+staleNote());
+  }finally{busy=false;}
+  render();
+}
+
+/* ---------- calcoli ---------- */
+function stats(id){
+  const h=state.holdings[id], m=market[id]||null;
+  const qty=h.lots.reduce((a,l)=>a+l.qty,0);
+  const cost=h.lots.reduce((a,l)=>a+l.qty*l.unit,0);
+  const avg=qty>0?cost/qty:0;
+  const price=m&&ok(m.current_price)?m.current_price:null;
+  const value=price!=null?qty*price:null;
+  const pnl=value!=null?value-cost:null;
+  const pnlPct=(pnl!=null&&cost>0)?pnl/cost*100:null;
+  const ch24=m?(ok(m.price_change_percentage_24h_in_currency)?m.price_change_percentage_24h_in_currency:(ok(m.price_change_percentage_24h)?m.price_change_percentage_24h:null)):null;
+  const value24=(value!=null&&ch24!=null&&ch24>-100)?value/(1+ch24/100):null;
+  return {id,h,m,qty,cost,avg,price,value,pnl,pnlPct,ch24,value24};
+}
+function totals(){
+  let value=0,costP=0,v24=0,missing=0,has24=true,n=0;
+  for(const id in state.holdings){
+    n++; const s=stats(id);
+    if(ok(s.value)){value+=s.value; costP+=s.cost; if(ok(s.value24)) v24+=s.value24; else has24=false;}
+    else missing++;
+  }
+  const pnl=value-costP;
+  return {n,value,missing,pnl,pnlPct:costP>0?pnl/costP*100:null,
+    ch24:has24&&v24>0?value-v24:null,ch24Pct:has24&&v24>0?(value/v24-1)*100:null};
+}
+
+/* ---------- render ---------- */
+function render(){
+  renderTop();
+  if(view.screen==='detail') renderDetail(); else renderHome();
+}
+function renderTop(){
+  const t=totals();
+  $('#total').textContent=eur(t.value);
+  $('#pnl').innerHTML=t.n&&t.value>0?`<span class="${cls(t.pnl)}">${eurS(t.pnl)} (${pct(t.pnlPct)})</span> <span class="m">sul costo</span>`:'';
+  $('#chg24').innerHTML=ok(t.ch24)?`<span class="${cls(t.ch24)}">${eurS(t.ch24)} (${pct(t.ch24Pct)})</span> <span class="m">24h</span>`:'';
+  const p=$('#partial');
+  if(!storageOk){p.hidden=false; p.textContent='Memoria del browser non disponibile: le modifiche non vengono salvate';}
+  else if(t.missing){p.hidden=false; p.textContent=`Saldo parziale: ${t.missing} token senza prezzo`;}
+  else p.hidden=true;
+}
+function renderHome(){
+  const ids=Object.keys(state.holdings);
+  const list=$('#list');
+  if(!ids.length){
+    $('#alloc').hidden=true;
+    list.innerHTML='<p class="empty">Il portafoglio è vuoto. Aggiungi il primo acquisto: nome del token, quantità e costo di entrata.</p>';
+    return;
+  }
+  const rows=ids.map(stats).sort((a,b)=>(b.value||0)-(a.value||0));
+  const priced=rows.filter(r=>ok(r.value)&&r.value>0);
+  const tot=priced.reduce((a,r)=>a+r.value,0);
+  if(tot>0){$('#alloc').hidden=false; drawDonut(priced,tot,ids.length);} else $('#alloc').hidden=true;
+  list.innerHTML=rows.map(r=>{
+    const img=safeImg(r.h.thumb||(r.m&&r.m.image));
+    return `<button class="row" type="button" data-id="${esc(r.id)}">
+      ${img?`<img src="${esc(img)}" alt="" loading="lazy">`:'<span class="ph"></span>'}
+      <span><span class="n">${esc(r.h.name)}</span><br><span class="s">${qf(r.qty)} ${esc(sym(r.h))}</span></span>
+      <span class="r"><span class="n">${eur(r.value)}</span><br><span class="s ${cls(r.pnlPct)}">${pct(r.pnlPct)}</span></span>
+    </button>`;
+  }).join('');
+}
+function drawDonut(rows,tot,count){
+  const segs=rows.slice(0,6).map((r,i)=>({name:sym(r.h)||r.h.name,v:r.value,c:COLORS[i]}));
+  const rest=rows.slice(6);
+  if(rest.length) segs.push({name:`Altri (${rest.length})`,v:rest.reduce((a,r)=>a+r.value,0),c:OTHER});
+  const R=52,C=2*Math.PI*R; let off=0;
+  let svg=`<svg viewBox="0 0 140 140" role="img" aria-label="Ripartizione del portafoglio per valore"><circle cx="70" cy="70" r="${R}" fill="none" stroke="var(--soft)" stroke-width="18"/>`;
+  segs.forEach(s=>{
+    const len=s.v/tot*C;
+    svg+=`<circle cx="70" cy="70" r="${R}" fill="none" stroke="${s.c}" stroke-width="18" stroke-dasharray="${len.toFixed(3)} ${(C-len).toFixed(3)}" stroke-dashoffset="${(-off).toFixed(3)}" transform="rotate(-90 70 70)"/>`;
+    off+=len;
+  });
+  svg+=`<text x="70" y="75" text-anchor="middle" font-size="14" font-weight="600" fill="var(--text)">${count} token</text></svg>`;
+  $('#donut').innerHTML=svg;
+  $('#legend').innerHTML=segs.map(s=>`<li><span class="sw" style="background:${s.c}"></span><span>${esc(s.name)}</span><span class="w">${nfP.format(s.v/tot*100)}%</span></li>`).join('');
+}
+
+const kv=(l,v,c='')=>`<div><dt>${l}</dt><dd class="${c}">${v}</dd></div>`;
+function renderDetail(){
+  const id=view.id;
+  if(!state.holdings[id]){go('home'); return;}
+  const s=stats(id), m=s.m||{}, h=s.h, t=totals();
+  const w=ok(s.value)&&t.value>0?s.value/t.value*100:null;
+  const img=safeImg(m.image||h.thumb);
+  const lots=h.lots.slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  $('#detail').innerHTML=`
+    <button class="link" id="back" type="button">‹ Portafoglio</button>
+    <div class="dh">${img?`<img src="${esc(img)}" alt="">`:''}<div><h1>${esc(h.name)}</h1>
+      <div class="s">${esc(sym(h))}${m.market_cap_rank?`, rank #${esc(m.market_cap_rank)}`:''}</div></div></div>
+    <div class="price"><span class="big">${eur(s.price)}</span><span class="${cls(s.ch24)}">${pct(s.ch24)} in 24h</span></div>
+    <div class="ranges" role="group" aria-label="Periodo del grafico">
+      ${[['1','24h'],['7','7 giorni'],['30','30 giorni'],['365','1 anno']].map(([d,l])=>`<button type="button" data-days="${d}" aria-pressed="${view.days===d}">${l}</button>`).join('')}
+    </div>
+    <div class="tip" id="tip"></div>
+    <div class="chart" id="chart"><p class="m">Caricamento grafico…</p></div>
+    <section><h2>La tua posizione</h2><dl class="kv">
+      ${kv('Quantità',qf(s.qty)+' '+esc(sym(h)))}
+      ${kv('Prezzo medio di entrata',eur(s.avg))}
+      ${kv('Costo totale',eur(s.cost))}
+      ${kv('Valore attuale',eur(s.value))}
+      ${kv('Profitto / perdita',eurS(s.pnl),cls(s.pnl))}
+      ${kv('Rendimento sul costo',pct(s.pnlPct),cls(s.pnlPct))}
+      ${kv('Peso nel portafoglio',ok(w)?nfP.format(w)+'%':'—')}
+    </dl></section>
+    <section><h2>Mercato</h2><dl class="kv">
+      ${kv('Variazione 1h',pct(m.price_change_percentage_1h_in_currency),cls(m.price_change_percentage_1h_in_currency))}
+      ${kv('Variazione 7 giorni',pct(m.price_change_percentage_7d_in_currency),cls(m.price_change_percentage_7d_in_currency))}
+      ${kv('Variazione 30 giorni',pct(m.price_change_percentage_30d_in_currency),cls(m.price_change_percentage_30d_in_currency))}
+      ${kv('Variazione 1 anno',pct(m.price_change_percentage_1y_in_currency),cls(m.price_change_percentage_1y_in_currency))}
+      ${kv('Minimo 24h',eur(m.low_24h))}
+      ${kv('Massimo 24h',eur(m.high_24h))}
+      ${kv('Capitalizzazione',eurC(m.market_cap))}
+      ${kv('Volume 24h',eurC(m.total_volume))}
+      ${kv('Massimo storico',eur(m.ath)+(m.ath_date?`<br><span class="s">${dIt(m.ath_date)}</span>`:''))}
+      ${kv('Distanza dal massimo',pct(m.ath_change_percentage),cls(m.ath_change_percentage))}
+      ${kv('Offerta circolante',qf(m.circulating_supply))}
+      ${kv('Offerta massima',ok(m.max_supply)?qf(m.max_supply):'Non definita')}
+    </dl></section>
+    <section><h2>Acquisti (${lots.length})</h2><ul class="lots">
+      ${lots.map(l=>{
+        const lp=s.price!=null?(s.price-l.unit)*l.qty:null;
+        return `<li><span>${dIt(l.date)}: ${qf(l.qty)} a ${eur(l.unit)}<br><span class="s">Costo ${eur(l.qty*l.unit)}, oggi <span class="${cls(lp)}">${eurS(lp)}</span></span></span>
+          <button class="del" type="button" data-lot="${esc(l.id)}">Elimina</button></li>`;
+      }).join('')}
+    </ul>
+    <button class="primary" id="addHere" type="button">Aggiungi acquisto di ${esc(h.name)}</button></section>
+    <button class="danger" id="rm" type="button">Rimuovi ${esc(h.name)} dal portafoglio</button>
+    <p class="m small" style="margin-bottom:36px">${s.m?`Dato di mercato CoinGecko del ${esc(m.last_updated?new Date(m.last_updated).toLocaleString('it-IT'):'n/d')}. Il valore di posizione usa solo gli acquisti inseriti, non legge il wallet Tangem.`:'Prezzo non disponibile per questo token su CoinGecko.'}</p>`;
+
+  $('#back').onclick=()=>{ if(history.state&&history.state.d) history.back(); else go('home'); };
+  document.querySelectorAll('.ranges button').forEach(b=>b.onclick=()=>{view.days=b.dataset.days; lastChart=null; renderDetail();});
+  document.querySelectorAll('.del').forEach(b=>b.onclick=()=>delLot(id,b.dataset.lot));
+  $('#addHere').onclick=()=>openSheet({id:h.id,name:h.name,symbol:h.symbol,thumb:h.thumb});
+  $('#rm').onclick=()=>{
+    if(!confirm(`Rimuovere ${h.name} e tutti i suoi ${h.lots.length} acquisti?`)) return;
+    delete state.holdings[id]; save(); go('home');
+  };
+  loadAndDraw();
+}
+
+function delLot(id,lotId){
+  const h=state.holdings[id]; if(!h) return;
+  const l=h.lots.find(x=>x.id===lotId); if(!l) return;
+  if(!confirm(`Eliminare l'acquisto di ${qf(l.qty)} ${sym(h)} a ${eur(l.unit)}?`)) return;
+  h.lots=h.lots.filter(x=>x.id!==lotId);
+  if(!h.lots.length){delete state.holdings[id]; save(); go('home'); return;}
+  save(); lastChart=null; render();
+}
+
+/* ---------- grafico prezzo ---------- */
+async function loadChart(id,days){
+  const k=id+'|'+days, c=chartCache[k];
+  if(c&&Date.now()-c.t<CHART_TTL) return c.data;
+  const d=await getJSON(`${API}/coins/${encodeURIComponent(id)}/market_chart?vs_currency=${CCY}&days=${days}`);
+  const pts=(d&&Array.isArray(d.prices)?d.prices:[]).filter(p=>Array.isArray(p)&&ok(p[0])&&ok(p[1]));
+  chartCache[k]={t:Date.now(),data:pts};
+  return pts;
+}
+async function loadAndDraw(){
+  const id=view.id, days=view.days;
+  try{
+    const pts=await loadChart(id,days);
+    if(view.screen!=='detail'||view.id!==id||view.days!==days) return;
+    lastChart={pts,avg:stats(id).avg,days};
+    drawLine();
+  }catch(e){
+    if(view.screen!=='detail'||view.id!==id||view.days!==days) return;
+    const box=$('#chart');
+    if(box) box.innerHTML=`<p class="m">${e.code===429?'Limite richieste CoinGecko raggiunto: riprova tra un minuto.':'Grafico non disponibile ('+esc(e.message)+').'}</p>`;
+  }
+}
+function drawLine(){
+  const box=$('#chart'), tip=$('#tip');
+  if(!box||!lastChart) return;
+  const {pts,avg,days}=lastChart;
+  if(pts.length<2){box.innerHTML='<p class="m">Dati insufficienti per il grafico.</p>'; tip.textContent=''; return;}
+  const W=Math.max(280,Math.round(box.clientWidth)), H=230, pl=4, pr=4, pt=16, pb=24;
+  let lo=Infinity, hi=-Infinity;
+  for(const p of pts){if(p[1]<lo)lo=p[1]; if(p[1]>hi)hi=p[1];}
+  let min=lo, max=hi;
+  const showAvg=avg>0&&avg>=lo*0.6&&avg<=hi*1.6;
+  if(showAvg){min=Math.min(min,avg); max=Math.max(max,avg);}
+  if(max===min){const e=Math.abs(max)*0.01||1e-9; max+=e; min-=e;}
+  const padv=(max-min)*0.06; min-=padv; max+=padv;
+  const t0=pts[0][0], t1=pts[pts.length-1][0];
+  const X=t=>pl+(t-t0)/(t1-t0)*(W-pl-pr);
+  const Y=v=>pt+(1-(v-min)/(max-min))*(H-pt-pb);
+  let d=''; pts.forEach((p,i)=>{d+=(i?'L':'M')+X(p[0]).toFixed(1)+' '+Y(p[1]).toFixed(1);});
+  const area=d+`L${X(t1).toFixed(1)} ${H-pb}L${X(t0).toFixed(1)} ${H-pb}Z`;
+  const first=pts[0][1], last=pts[pts.length-1][1];
+  const col=last>=first?'var(--up)':'var(--down)';
+  const fT=t=>days==='1'?new Date(t).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}):new Date(t).toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:days==='365'?'2-digit':undefined});
+  const fFull=t=>new Date(t).toLocaleString('it-IT',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+  let avgSvg='';
+  if(showAvg){
+    const y=Y(avg).toFixed(1);
+    avgSvg=`<line x1="${pl}" x2="${W-pr}" y1="${y}" y2="${y}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4"/>
+      <text x="${pl+2}" y="${(Y(avg)-5).toFixed(1)}" font-size="11" fill="var(--muted)">Tuo prezzo medio ${esc(eur(avg))}</text>`;
+  }
+  box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Andamento del prezzo">
+    <path d="${area}" fill="${col}" fill-opacity=".12"/>
+    <path d="${d}" fill="none" stroke="${col}" stroke-width="1.8" stroke-linejoin="round"/>
+    ${avgSvg}
+    <text x="${pl}" y="${H-6}" font-size="11" fill="var(--muted)">${esc(fT(t0))}</text>
+    <text x="${W-pr}" y="${H-6}" font-size="11" fill="var(--muted)" text-anchor="end">${esc(fT(t1))}</text>
+    <line id="cx" y1="${pt}" y2="${H-pb}" stroke="var(--muted)" stroke-width="1" visibility="hidden"/>
+    <circle id="cc" r="4" fill="${col}" visibility="hidden"/>
+  </svg>`;
+  const baseTip=`Nel periodo <span class="${cls(last/first-1)}">${pct((last/first-1)*100)}</span>. Minimo ${esc(eur(lo))}, massimo ${esc(eur(hi))}${avg>0&&!showAvg?'. Il tuo prezzo medio ('+esc(eur(avg))+') è fuori scala':''}`;
+  tip.innerHTML=baseTip;
+  const svg=box.querySelector('svg'), cx=svg.querySelector('#cx'), cc=svg.querySelector('#cc');
+  svg.addEventListener('pointermove',e=>{
+    const r=svg.getBoundingClientRect(); if(!r.width) return;
+    const x=(e.clientX-r.left)*(W/r.width);
+    const tt=t0+(x-pl)/(W-pl-pr)*(t1-t0);
+    let a=0,b=pts.length-1;
+    while(b-a>1){const mid=(a+b)>>1; if(pts[mid][0]<tt) a=mid; else b=mid;}
+    const p=Math.abs(pts[a][0]-tt)<=Math.abs(pts[b][0]-tt)?pts[a]:pts[b];
+    const px=X(p[0]).toFixed(1), py=Y(p[1]).toFixed(1);
+    cx.setAttribute('x1',px); cx.setAttribute('x2',px); cx.setAttribute('visibility','visible');
+    cc.setAttribute('cx',px); cc.setAttribute('cy',py); cc.setAttribute('visibility','visible');
+    const vs=avg>0?`, <span class="${cls(p[1]-avg)}">${pct((p[1]/avg-1)*100)}</span> sul tuo medio`:'';
+    tip.innerHTML=`${esc(eur(p[1]))} il ${esc(fFull(p[0]))}${vs}`;
+  });
+  svg.addEventListener('pointerleave',()=>{cx.setAttribute('visibility','hidden'); cc.setAttribute('visibility','hidden'); tip.innerHTML=baseTip;});
+}
+
+/* ---------- navigazione ---------- */
+function go(screen,id,push=true){
+  view.screen=screen; view.id=id||null; lastChart=null;
+  $('#home').hidden=screen!=='home'; $('#detail').hidden=screen!=='detail';
+  if(push&&screen==='detail') history.pushState({d:id},'');
+  render(); window.scrollTo(0,0);
+}
+window.addEventListener('popstate',e=>{
+  if(e.state&&e.state.d&&state.holdings[e.state.d]) go('detail',e.state.d,false); else go('home',null,false);
+});
+$('#list').addEventListener('click',e=>{const b=e.target.closest('.row'); if(b) go('detail',b.dataset.id);});
+
+/* ---------- modulo acquisto ---------- */
+let picked=null, searchT=null, searchSeq=0;
+function openSheet(pre){
+  picked=null; $('#q').value=''; $('#results').innerHTML=''; $('#qty').value=''; $('#cost').value='';
+  $('#date').value=localDate(); $('#formErr').textContent='';
+  if(pre) pickCoin(pre); else {$('#picked').hidden=true; $('#qwrap').hidden=false;}
+  updPreview(); $('#sheet').hidden=false;
+  setTimeout(()=>(pre?$('#qty'):$('#q')).focus(),50);
+}
+function closeSheet(){$('#sheet').hidden=true; clearTimeout(searchT); searchSeq++;}
+function pickCoin(c){
+  picked={id:c.id,name:c.name,symbol:c.symbol,thumb:safeImg(c.thumb)};
+  $('#qwrap').hidden=true;
+  const p=$('#picked'); p.hidden=false;
+  p.innerHTML=`${picked.thumb?`<img src="${esc(picked.thumb)}" alt="">`:''}<div class="grow"><span class="n">${esc(picked.name)}</span> <span class="s">${esc(String(picked.symbol).toUpperCase())}</span><br><span class="s">ID CoinGecko: ${esc(picked.id)}</span></div><button type="button" class="link" id="unpick">Cambia</button>`;
+  $('#unpick').onclick=()=>{picked=null; p.hidden=true; $('#qwrap').hidden=false; $('#q').focus();};
+}
+async function doSearch(v){
+  const seq=++searchSeq, box=$('#results');
+  box.innerHTML='<p class="m small">Ricerca…</p>';
+  try{
+    const d=await getJSON(`${API}/search?query=${encodeURIComponent(v)}`);
+    if(seq!==searchSeq) return;
+    const coins=(d&&Array.isArray(d.coins)?d.coins:[]).slice(0,8);
+    if(!coins.length){box.innerHTML='<p class="m small">Nessun token trovato su CoinGecko con questo nome.</p>'; return;}
+    box.innerHTML='';
+    coins.forEach(c=>{
+      const b=document.createElement('button'); b.type='button'; b.className='res';
+      const img=safeImg(c.thumb);
+      b.innerHTML=`${img?`<img src="${esc(img)}" alt="">`:'<span></span>'}<span><span class="n">${esc(c.name)}</span> <span class="s">${esc(String(c.symbol||'').toUpperCase())}</span><br><span class="s">${esc(c.id)}</span></span><span class="s">${c.market_cap_rank?'#'+esc(c.market_cap_rank):'senza rank'}</span>`;
+      b.onclick=()=>{pickCoin(c); $('#qty').focus();};
+      box.append(b);
+    });
+  }catch(e){
+    if(seq!==searchSeq) return;
+    box.innerHTML=`<p class="err">${e.code===429?'Limite richieste CoinGecko raggiunto: riprova tra un minuto.':'Ricerca non riuscita ('+esc(e.message)+'). Controlla la connessione.'}</p>`;
+  }
+}
+$('#q').addEventListener('input',()=>{
+  clearTimeout(searchT); const v=$('#q').value.trim();
+  if(v.length<2){searchSeq++; $('#results').innerHTML=''; return;}
+  searchT=setTimeout(()=>doSearch(v),450);
+});
+const mode=()=>document.querySelector('input[name=cm]:checked').value;
+function updPreview(){
+  $('#costLbl').textContent=mode()==='unit'?'Prezzo per unità in euro':'Costo totale in euro';
+  const q=parseNum($('#qty').value), c=parseNum($('#cost').value), pv=$('#preview');
+  if(!(q>0)||!(c>=0)){pv.textContent=''; return;}
+  const unit=mode()==='unit'?c:c/q, total=mode()==='unit'?c*q:c;
+  pv.textContent=`Letto come: ${qf(q)} unità, ${eur(unit)} per unità, costo totale ${eur(total)}`;
+}
+['#qty','#cost'].forEach(s=>$(s).addEventListener('input',updPreview));
+document.querySelectorAll('input[name=cm]').forEach(r=>r.addEventListener('change',updPreview));
+function saveLot(){
+  const err=$('#formErr');
+  if(!picked){err.textContent='Scegli il token dalla lista dei risultati.'; return;}
+  const qty=parseNum($('#qty').value);
+  if(!(qty>0)){err.textContent='Inserisci una quantità maggiore di zero.'; return;}
+  const c=parseNum($('#cost').value);
+  if(!(c>=0)){err.textContent='Inserisci il costo di entrata (0 è ammesso, ad esempio per un airdrop).'; return;}
+  const unit=mode()==='unit'?c:c/qty;
+  let created=false, h=state.holdings[picked.id];
+  if(!h){h=state.holdings[picked.id]={id:picked.id,name:picked.name,symbol:picked.symbol,thumb:picked.thumb,lots:[]}; created=true;}
+  const lot={id:uid(),qty,unit,date:$('#date').value||null};
+  h.lots.push(lot);
+  if(!save()){
+    h.lots.pop(); if(created) delete state.holdings[picked.id];
+    err.textContent='Salvataggio non riuscito: la memoria del browser non è disponibile.'; return;
+  }
+  closeSheet(); lastChart=null; render(); refreshMarket();
+}
+$('#add').onclick=()=>openSheet(null);
+$('#cancel').onclick=closeSheet;
+$('#saveLot').onclick=saveLot;
+$('#sheet').addEventListener('click',e=>{if(e.target.id==='sheet') closeSheet();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#sheet').hidden) closeSheet();});
+
+/* ---------- backup ---------- */
+$('#exp').onclick=()=>{
+  const data=JSON.stringify({version:1,currency:'EUR',exportedAt:new Date().toISOString(),holdings:state.holdings},null,2);
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));
+  a.download='portafoglio-tangem-'+localDate()+'.json';
+  document.body.append(a); a.click();
+  setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},1500);
+};
+$('#impFile').onchange=e=>{
+  const f=e.target.files&&e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    let s; try{s=JSON.parse(r.result);}catch(_){s=null;}
+    e.target.value='';
+    if(!valid(s)){alert('File non valido: non è un backup di questa app.'); return;}
+    if(!confirm('Sostituire il portafoglio attuale con il backup selezionato?')) return;
+    state={version:1,holdings:s.holdings}; save(); market={}; lastOk=0; go('home',null,false); refreshMarket();
+  };
+  r.onerror=()=>{e.target.value=''; alert('Lettura del file non riuscita.');};
+  r.readAsText(f);
+};
+
+/* ---------- avvio ---------- */
+$('#refresh').onclick=()=>refreshMarket();
+let rsT; window.addEventListener('resize',()=>{clearTimeout(rsT); rsT=setTimeout(drawLine,150);});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()-lastOk>REFRESH_MS/2) refreshMarket();});
+setInterval(()=>{if(!document.hidden) refreshMarket();},REFRESH_MS);
+
+load();
+render();
+if(lastOk) setStatus('warn','Prezzi salvati delle '+clock(lastOk)+', aggiornamento in corso');
+refreshMarket();
+if('serviceWorker' in navigator && location.protocol==='https:'){
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+})();
+</script>
+</body>
+</html>
