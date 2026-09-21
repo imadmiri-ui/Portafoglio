@@ -876,13 +876,13 @@ async function getFng(){
   }catch(e){fng={t:Date.now()-3300000,err:e.message};}
   return fng;
 }
+/* Social: post Reddit delle ultime 24 ore (endpoint pubblico JSON, senza chiave). */
 async function getSocial(id){
   const h=state.holdings[id];
   try{
-    const d=await getJSON(`${NEWS_API}/social?asset=${encodeURIComponent(sym(h))}`);
-    const o=(d&&(d.overallSentiment||d.overall||d.sentiment))||{};
-    const sc=typeof o.score==='number'?o.score:parseFloat(o.score);
-    return ok(sc)?{score:sc}:{err:'formato non riconosciuto'};
+    const d=await getJSON(`https://www.reddit.com/search.json?q=${encodeURIComponent(tokTerms(h).join(' OR '))}&sort=new&t=day&limit=50&raw_json=1`);
+    const posts=((d&&d.data&&Array.isArray(d.data.children))?d.data.children:[]).map(c=>c&&c.data).filter(p=>p&&typeof p.title==='string');
+    return Object.assign({n:posts.length},toneOf(posts.map(p=>p.title)));
   }catch(e){return {err:e.message};}
 }
 async function getYT(id,force){
@@ -925,7 +925,7 @@ function confluence(id,a){
   else rows.push(['Notizie',dirOf(S.news),`${S.news.pos} positive e ${S.news.neg} negative su ${S.news.tot} titoli`]);
   if(!S) rows.push(['Social',null,'in caricamento']);
   else if(S.social.err) rows.push(['Social',null,'non disponibile']);
-  else rows.push(['Social',S.social.score>0.2?1:S.social.score<-0.2?-1:0,`punteggio ${S.social.score.toFixed(2)} su scala da -1 a +1`]);
+  else rows.push(['Social',S.social.tot?dirOf(S.social):0,`${S.social.n} post Reddit nelle ultime 24 ore, ${S.social.pos} positivi e ${S.social.neg} negativi`]);
   if(!settings.ytKey) rows.push(['YouTube',null,'aggiungi la chiave API in Consiglio, Impostazioni']);
   else if(!S) rows.push(['YouTube',null,'in caricamento']);
   else if(!S.yt||S.yt.err) rows.push(['YouTube',null,S.yt&&S.yt.err?S.yt.err:'non disponibile']);
@@ -946,7 +946,7 @@ function confHtml(id,a){
 function renderForecast(noKick){
   const box=$('#forecast'), ids=Object.keys(state.holdings);
   const head=`<section><h2>Previsioni</h2>
-    <p class="intro">Ogni token è valutato su più fonti: analisi tecnica degli ultimi 90 giorni, notizie, sentiment social, video YouTube (se inserisci la chiave) e clima di mercato. Le conferme dicono se le fonti vanno nella stessa direzione: non prevedono il futuro. Il tono di notizie e video è una stima automatica basata su parole chiave nei titoli.</p>
+    <p class="intro">Ogni token è valutato su più fonti: analisi tecnica degli ultimi 90 giorni, notizie da tutto il mondo, post Reddit, video YouTube (se inserisci la chiave) e clima di mercato. Le conferme dicono se le fonti vanno nella stessa direzione: non prevedono il futuro. Il tono di notizie e video è una stima automatica basata su parole chiave nei titoli.</p>
     <div class="bar"><span class="m small">${taBusy||sigBusy?'Analisi in corso…':'Tecnica ogni 6 ore, fonti ogni 30 minuti'}</span><button class="link" id="fcRefresh" type="button">Ricalcola</button></div>`;
   if(!ids.length){box.innerHTML=head+'<p class="empty">Aggiungi almeno un token nel portafoglio per vedere le previsioni.</p></section>'; bindFc(); return;}
   const cards=ids.map(id=>{
@@ -991,7 +991,9 @@ function bindFc(){
 }
 
 /* ---------- notizie (fonte: cryptocurrency.cv, servizio esterno gratuito) ---------- */
-const NEWS_API='https://cryptocurrency.cv/api';
+/* Notizie: GDELT DOC 2.0 (gratuito, senza chiave, CORS aperto). Il servizio chiede
+   al massimo una richiesta ogni 5 secondi: le richieste vengono messe in fila. */
+const GD='https://api.gdeltproject.org/api/v2/doc/doc';
 const NEWS_TTL=15*60*1000;
 const news={filter:'mine',cache:{},busy:false};
 const textOf=s=>{try{return (new DOMParser().parseFromString(String(s||''),'text/html').body.textContent||'').trim();}catch(e){return '';}};
@@ -1003,18 +1005,35 @@ function ago(d){
 }
 const pickArr=d=>{const a=Array.isArray(d)?d:(d&&(d.articles||d.results||d.data))||[]; return Array.isArray(a)?a:[];};
 const artDate=a=>new Date(a.pubDate||a.publishedAt||a.date||0).getTime()||0;
-function cryptoRx(){
-  const extra=Object.values(state.holdings).map(h=>[h.name,sym(h)]).reduce((x,y)=>x.concat(y),[]).filter(x=>x&&x.length>=3).map(x=>x.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
-  return new RegExp('\\b(?:crypto\\w*|bitcoin|btc|ethereum|eth|blockchain|tokens?|stablecoins?|defi|nfts?|altcoins?|web3|binance|coinbase|memecoins?|solana|xrp|ripple'+(extra.length?'|'+extra.join('|'):'')+')\\b','i');
+function tokTerms(h){
+  const t=[h.name,sym(h)].filter(x=>x&&x.length>=3).map(x=>/\s/.test(x)?`"${x}"`:x);
+  return t.filter((x,i)=>t.findIndex(y=>y.toLowerCase()===x.toLowerCase())===i);
 }
+const gdDate=s=>{const m=/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(String(s||'')); return m?`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`:'';};
+let gdChain=Promise.resolve(), gdLast=0;
+async function gdRun(query){
+  const wait=gdLast+5500-Date.now(); if(wait>0) await new Promise(r=>setTimeout(r,wait));
+  gdLast=Date.now();
+  const ctl=new AbortController(), to=setTimeout(()=>ctl.abort(),20000);
+  try{
+    const r=await fetch(`${GD}?query=${encodeURIComponent(query)}&mode=artlist&format=json&maxrecords=50&timespan=3d&sort=datedesc`,{signal:ctl.signal});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const txt=await r.text();
+    let d; try{d=JSON.parse(txt);}catch(e){throw new Error(/limit|seconds/i.test(txt)?'troppe richieste, riprovo tra poco':'risposta non valida');}
+    const all=(d&&Array.isArray(d.articles)?d.articles:[]).map(a=>({title:a.title,link:a.url,source:a.domain,pubDate:gdDate(a.seendate),lang:a.language}));
+    const pref=all.filter(a=>a.lang==='English'||a.lang==='Italian');
+    return pref.length?pref:all;
+  }catch(e){ if(e.name==='AbortError') throw new Error('timeout'); throw e; }
+  finally{clearTimeout(to);}
+}
+function gdelt(query){const p=gdChain.then(()=>gdRun(query)); gdChain=p.catch(()=>{}); return p;}
 /* chiavi: 'mine' = notizie dei tuoi token unite, 'market' = mercato crypto, altrimenti id del token */
 async function fetchNewsKey(key){
   const c=news.cache[key]; if(c&&Date.now()-c.t<NEWS_TTL) return c;
   try{
     let items=[];
     if(key==='market'){
-      const rx=cryptoRx();
-      items=pickArr(await getJSON(`${NEWS_API}/news?limit=50`)).filter(a=>rx.test(textOf(a.title)+' '+textOf(a.description||a.summary)));
+      items=await gdelt('(cryptocurrency OR bitcoin OR crypto)');
     }else if(key==='mine'){
       const ids=Object.keys(state.holdings); let all=[], errs=0, lastErr='';
       for(const id of ids){
@@ -1023,10 +1042,11 @@ async function fetchNewsKey(key){
       }
       if(ids.length&&errs===ids.length) throw new Error(lastErr);
       const seen=new Set();
-      items=all.filter(a=>{const k=safeLink(a.link||a.url)||textOf(a.title); if(seen.has(k)) return false; seen.add(k); return true;}).sort((x,y)=>artDate(y)-artDate(x)).slice(0,40);
+      items=all.filter(a=>{const k=safeLink(a.link)||textOf(a.title); if(seen.has(k)) return false; seen.add(k); return true;}).sort((x,y)=>artDate(y)-artDate(x)).slice(0,40);
     }else{
-      const h=state.holdings[key];
-      items=pickArr(await getJSON(`${NEWS_API}/search?q=${encodeURIComponent(h?h.name:key)}&limit=30`)).slice(0,30);
+      const h=state.holdings[key], terms=h?tokTerms(h):[];
+      if(!terms.length) throw new Error('nome del token troppo corto per la ricerca');
+      items=await gdelt(terms.length>1?`(${terms.join(' OR ')})`:terms[0]);
     }
     news.cache[key]={t:Date.now(),items};
   }catch(e){
@@ -1055,11 +1075,11 @@ function renderNews(noKick){
     const link=safeLink(a.link||a.url), title=textOf(a.title), desc=textOf(a.description||a.summary);
     const src=textOf(typeof a.source==='object'&&a.source?a.source.name:a.source);
     const when=ago(a.pubDate||a.publishedAt||a.date);
-    const inner=`<div class="t">${esc(title||'Senza titolo')}</div>${desc?`<div class="d">${esc(desc.length>180?desc.slice(0,177)+'…':desc)}</div>`:''}<div class="s">${esc([a._tok,src,when].filter(Boolean).join(', '))}</div>`;
+    const inner=`<div class="t">${esc(title||'Senza titolo')}</div>${desc?`<div class="d">${esc(desc.length>180?desc.slice(0,177)+'…':desc)}</div>`:''}<div class="s">${esc([a._tok,src,a.lang==='Italian'?'italiano':'',when].filter(Boolean).join(', '))}</div>`;
     return link?`<a class="news" href="${esc(link)}" target="_blank" rel="noopener noreferrer">${inner}</a>`:`<div class="news">${inner}</div>`;
   }).join('');
   box.innerHTML=`<section><h2>Notizie</h2>
-    <p class="intro">Notizie sui tuoi token e sul mercato crypto, per lo più in inglese. Fonte: cryptocurrency.cv. Una notizia non è un segnale: verifica sempre sulla fonte originale.</p>
+    <p class="intro">Notizie degli ultimi 3 giorni sui tuoi token e sul mercato crypto, in inglese e italiano. Fonte: GDELT, monitoraggio delle notizie mondiali. Una notizia non è un segnale: verifica sempre sulla fonte originale.</p>
     <div class="chips" role="group" aria-label="Filtro notizie">${chips.map(([k,l])=>`<button class="chip" type="button" data-f="${esc(k)}" aria-pressed="${news.filter===k}">${esc(l)}</button>`).join('')}</div>
     <div class="bar"><span class="m small">${news.busy?'Aggiornamento…':c&&!c.err?'Aggiornate '+ago(c.t):''}</span><button class="link" id="newsRefresh" type="button">Aggiorna</button></div>
     ${body}</section>`;
