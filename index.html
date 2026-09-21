@@ -111,6 +111,38 @@ footer{margin:28px 0 36px}
 .err{color:var(--down);font-size:14px;min-height:20px;margin:10px 0 0}
 .actions{display:flex;gap:10px;margin-top:8px}
 .actions button{flex:1;margin-top:0}
+
+/* Navigazione inferiore */
+body{padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
+.nav{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
+.nav-in{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr)}
+.nav a{display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 4px 10px;color:var(--muted);text-decoration:none;font-size:12px}
+.nav a svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.nav a[aria-current="page"]{color:var(--accent);font-weight:600}
+.intro{font-size:13.5px;color:var(--muted);margin:8px 0 0}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:4px}
+/* Previsioni */
+.fc{display:block;width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:12px}
+.fc-h{display:flex;align-items:center;gap:10px}
+.fc-h img{width:28px;height:28px;border-radius:50%}
+.badge{margin-left:auto;font-size:12.5px;font-weight:600;padding:3px 9px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+.side{color:var(--warn)}
+.fc ul{list-style:none;margin:10px 0 0;padding:0;font-size:14px}
+.fc li{padding:3px 0}
+.fc .inv{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-size:13.5px}
+/* Notizie */
+.chips{display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px;margin-top:8px}
+.chip{border:1px solid var(--line);border-radius:999px;padding:6px 12px;background:none;white-space:nowrap;font-size:14px}
+.chip[aria-pressed="true"]{background:var(--text);color:var(--bg);border-color:var(--text)}
+.news{display:block;padding:12px 0;border-bottom:1px solid var(--line);color:var(--text);text-decoration:none}
+.news .t{font-weight:600;line-height:1.35}
+.news .d{color:var(--muted);font-size:13.5px;margin-top:4px}
+.news .s{margin-top:4px}
+/* Consiglio */
+.daytip{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;font-size:16.5px;line-height:1.5;margin-top:10px}
+.checks{list-style:none;margin:10px 0 0;padding:0}
+.checks li{padding:10px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+.checks .lv{font-weight:600}
 </style>
 </head>
 <body>
@@ -153,7 +185,19 @@ footer{margin:28px 0 36px}
     </footer>
   </div>
   <div id="detail" hidden></div>
+  <div id="forecast" hidden></div>
+  <div id="news" hidden></div>
+  <div id="tips" hidden></div>
 </main>
+
+<nav class="nav" aria-label="Sezioni">
+  <div class="nav-in">
+    <a href="#/" data-tab="portafoglio"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Portafoglio</a>
+    <a href="#/previsioni" data-tab="previsioni"><svg viewBox="0 0 24 24"><path d="M3 17l5-5 4 3 8-8"/><path d="M15 7h5v5"/></svg>Previsioni</a>
+    <a href="#/notizie" data-tab="notizie"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>Notizie</a>
+    <a href="#/consiglio" data-tab="consiglio"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>Consiglio</a>
+  </div>
+</nav>
 
 <div id="sheet" class="sheet" hidden>
   <div class="card" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
@@ -196,7 +240,7 @@ const $=s=>document.querySelector(s);
 
 let state={version:1,holdings:{}};
 let market={}, lastOk=0, backoffUntil=0, busy=false, storageOk=true;
-const view={screen:'home',id:null,days:'7'};
+const view={screen:'portafoglio',id:null,days:'7',routed:false};
 let lastChart=null;
 const chartCache={};
 
@@ -321,7 +365,11 @@ function totals(){
 /* ---------- render ---------- */
 function render(){
   renderTop();
-  if(view.screen==='detail') renderDetail(); else renderHome();
+  if(view.screen==='detail') renderDetail();
+  else if(view.screen==='previsioni') renderForecast();
+  else if(view.screen==='notizie') renderNews();
+  else if(view.screen==='consiglio') renderTips();
+  else renderHome();
 }
 function renderTop(){
   const t=totals();
@@ -373,7 +421,7 @@ function drawDonut(rows,tot,count){
 const kv=(l,v,c='')=>`<div><dt>${l}</dt><dd class="${c}">${v}</dd></div>`;
 function renderDetail(){
   const id=view.id;
-  if(!state.holdings[id]){go('home'); return;}
+  if(!state.holdings[id]){location.replace('#/'); return;}
   const s=stats(id), m=s.m||{}, h=s.h, t=totals();
   const w=ok(s.value)&&t.value>0?s.value/t.value*100:null;
   const img=safeImg(m.image||h.thumb);
@@ -422,13 +470,13 @@ function renderDetail(){
     <button class="danger" id="rm" type="button">Rimuovi ${esc(h.name)} dal portafoglio</button>
     <p class="m small" style="margin-bottom:36px">${s.m?`Dato di mercato CoinGecko del ${esc(m.last_updated?new Date(m.last_updated).toLocaleString('it-IT'):'n/d')}. Il valore di posizione usa solo gli acquisti inseriti, non legge il wallet Tangem.`:'Prezzo non disponibile per questo token su CoinGecko.'}</p>`;
 
-  $('#back').onclick=()=>{ if(history.state&&history.state.d) history.back(); else go('home'); };
+  $('#back').onclick=goBack;
   document.querySelectorAll('.ranges button').forEach(b=>b.onclick=()=>{view.days=b.dataset.days; lastChart=null; renderDetail();});
   document.querySelectorAll('.del').forEach(b=>b.onclick=()=>delLot(id,b.dataset.lot));
   $('#addHere').onclick=()=>openSheet({id:h.id,name:h.name,symbol:h.symbol,thumb:h.thumb});
   $('#rm').onclick=()=>{
     if(!confirm(`Rimuovere ${h.name} e tutti i suoi ${h.lots.length} acquisti?`)) return;
-    delete state.holdings[id]; save(); go('home');
+    delete state.holdings[id]; save(); location.replace('#/');
   };
   loadAndDraw();
 }
@@ -438,7 +486,7 @@ function delLot(id,lotId){
   const l=h.lots.find(x=>x.id===lotId); if(!l) return;
   if(!confirm(`Eliminare l'acquisto di ${qf(l.qty)} ${sym(h)} a ${eur(l.unit)}?`)) return;
   h.lots=h.lots.filter(x=>x.id!==lotId);
-  if(!h.lots.length){delete state.holdings[id]; save(); go('home'); return;}
+  if(!h.lots.length){delete state.holdings[id]; save(); location.replace('#/'); return;}
   save(); lastChart=null; render();
 }
 
@@ -520,16 +568,223 @@ function drawLine(){
   svg.addEventListener('pointerleave',()=>{cx.setAttribute('visibility','hidden'); cc.setAttribute('visibility','hidden'); tip.innerHTML=baseTip;});
 }
 
-/* ---------- navigazione ---------- */
-function go(screen,id,push=true){
-  view.screen=screen; view.id=id||null; lastChart=null;
-  $('#home').hidden=screen!=='home'; $('#detail').hidden=screen!=='detail';
-  if(push&&screen==='detail') history.pushState({d:id},'');
+
+/* ---------- analisi tecnica (funzione pura, testabile) ---------- */
+function analyze(closes){
+  const n=closes.length; if(n<25) return null;
+  const last=closes[n-1];
+  const sma=k=>n>=k?closes.slice(n-k).reduce((a,b)=>a+b,0)/k:null;
+  const s20=sma(20), s50=sma(50);
+  const ch=k=>n>k?(last/closes[n-1-k]-1)*100:null;
+  const rets=[]; for(let i=Math.max(1,n-30);i<n;i++) rets.push(Math.log(closes[i]/closes[i-1]));
+  const mu=rets.reduce((a,b)=>a+b,0)/rets.length;
+  const sd=Math.sqrt(rets.reduce((a,r)=>a+(r-mu)*(r-mu),0)/Math.max(1,rets.length-1));
+  const w=closes.slice(-30); const lo30=Math.min(...w), hi30=Math.max(...w);
+  let g=0,l=0; for(let i=n-14;i<n;i++){const d=closes[i]-closes[i-1]; if(d>0) g+=d; else l-=d;}
+  const rsi=l===0?100:100-100/(1+g/l);
+  const ch7=ch(7);
+  let trend='side';
+  if(last>s20&&(s50==null||s20>s50)&&ch7>0) trend='up';
+  else if(last<s20&&(s50==null||s20<s50)&&ch7<0) trend='down';
+  return {last,s20,s50,ch7,ch30:ch(30),vol:sd*100,sd,lo30,hi30,rsi,trend};
+}
+
+/* ---------- previsioni ---------- */
+const TA_TTL=6*3600*1000;
+const ta={}; let taBusy=false;
+function taLoadCache(id){
+  if(ta[id]) return ta[id];
+  try{const o=JSON.parse(localStorage.getItem(KEY+'-ta-'+id)||'null'); if(o&&o.t&&Array.isArray(o.closes)) ta[id]=o;}catch(e){}
+  return ta[id];
+}
+async function runForecast(force){
+  if(taBusy) return; taBusy=true;
+  try{
+    const ids=Object.keys(state.holdings);
+    for(const id of ids){
+      const c=taLoadCache(id);
+      if(c&&!c.err&&!force&&Date.now()-c.t<TA_TTL) continue;
+      if(Date.now()<backoffUntil) break;
+      try{
+        const d=await getJSON(`${API}/coins/${encodeURIComponent(id)}/market_chart?vs_currency=${CCY}&days=90&interval=daily`);
+        const closes=(d&&Array.isArray(d.prices)?d.prices:[]).map(p=>p&&p[1]).filter(ok);
+        ta[id]={t:Date.now(),closes};
+        try{localStorage.setItem(KEY+'-ta-'+id,JSON.stringify(ta[id]));}catch(e){}
+      }catch(e){
+        if(e.code===429){backoffUntil=Date.now()+90000; ta[id]={t:Date.now(),closes:[],err:'Limite richieste CoinGecko: riprovo più tardi'}; break;}
+        ta[id]={t:Date.now(),closes:[],err:'Dati non disponibili ('+e.message+')'};
+      }
+      if(view.screen==='previsioni') renderForecast(true);
+      await new Promise(r=>setTimeout(r,2500));
+    }
+  }finally{taBusy=false; if(view.screen==='previsioni') renderForecast(true);}
+}
+function renderForecast(noKick){
+  const box=$('#forecast'), ids=Object.keys(state.holdings);
+  const head=`<section><h2>Previsioni</h2>
+    <p class="intro">Indicatori tecnici calcolati sugli ultimi 90 giorni di prezzi. Descrivono la tendenza attuale e i livelli da osservare: non prevedono il futuro e non sono consigli di investimento.</p>
+    <div class="bar"><span class="m small">${taBusy?'Calcolo in corso…':'Aggiornati ogni 6 ore'}</span><button class="link" id="fcRefresh" type="button">Ricalcola</button></div>`;
+  if(!ids.length){box.innerHTML=head+'<p class="empty">Aggiungi almeno un token nel portafoglio per vedere le previsioni.</p></section>'; bindFc(); return;}
+  const cards=ids.map(id=>{
+    const h=state.holdings[id], m=market[id]||{}, c=taLoadCache(id);
+    const img=safeImg(m.image||h.thumb);
+    const top=`<div class="fc-h">${img?`<img src="${esc(img)}" alt="">`:''}<div><span class="n">${esc(h.name)}</span><br><span class="s">${esc(sym(h))}</span></div>`;
+    if(!c) return `<button class="fc" type="button" data-id="${esc(id)}">${top}<span class="badge m">In attesa</span></div></button>`;
+    if(c.err) return `<button class="fc" type="button" data-id="${esc(id)}">${top}<span class="badge m">Non disponibile</span></div><p class="m small" style="margin:8px 0 0">${esc(c.err)}</p></button>`;
+    const a=analyze(c.closes);
+    if(!a) return `<button class="fc" type="button" data-id="${esc(id)}">${top}<span class="badge m">Storico breve</span></div><p class="m small" style="margin:8px 0 0">Servono almeno 25 giorni di prezzi.</p></button>`;
+    const p=ok(m.current_price)?m.current_price:a.last;
+    const lab={up:['Tendenza rialzista','up'],down:['Tendenza ribassista','down'],side:['Laterale o incerta','side']}[a.trend];
+    const rsiTxt=a.rsi>=70?'ipercomprato, rischio di storno':a.rsi<=30?'ipervenduto, possibile rimbalzo ma trend debole':'neutro';
+    const lo7=p*Math.exp(-a.sd*Math.sqrt(7)), hi7=p*Math.exp(a.sd*Math.sqrt(7));
+    let inv;
+    if(a.trend==='up') inv=`Scenario rialzista invalidato con chiusura giornaliera sotto ${eur(a.s20)} (media 20 giorni). Segnale più forte sotto ${eur(a.lo30)} (minimo 30 giorni).`;
+    else if(a.trend==='down') inv=`Scenario ribassista invalidato con chiusura giornaliera sopra ${eur(a.s20)} (media 20 giorni). Conferma di debolezza sotto ${eur(a.lo30)} (minimo 30 giorni).`;
+    else inv=`Direzione non definita: attendere una rottura sopra ${eur(a.hi30)} o sotto ${eur(a.lo30)} (massimo e minimo 30 giorni).`;
+    const st=stats(id);
+    return `<button class="fc" type="button" data-id="${esc(id)}">${top}<span class="badge ${lab[1]}">${lab[0]}</span></div>
+      <ul>
+        <li>Prezzo ${eur(p)}, <span class="${p>=a.s20?'up':'down'}">${p>=a.s20?'sopra':'sotto'}</span> la media 20 giorni (${eur(a.s20)})</li>
+        ${a.s50!=null?`<li>Media 20 giorni <span class="${a.s20>=a.s50?'up':'down'}">${a.s20>=a.s50?'sopra':'sotto'}</span> la media 50 giorni (${eur(a.s50)})</li>`:''}
+        <li>Variazione 7 giorni <span class="${cls(a.ch7)}">${pct(a.ch7)}</span>, 30 giorni <span class="${cls(a.ch30)}">${pct(a.ch30)}</span></li>
+        <li>RSI 14: ${nfP.format(a.rsi)} (${rsiTxt})</li>
+        <li>Volatilità giornaliera: ${nfP.format(a.vol)}%</li>
+        <li>Oscillazione tipica a 7 giorni: ${eur(lo7)} – ${eur(hi7)} <span class="m">(circa 2 casi su 3, non è un obiettivo)</span></li>
+        ${st.avg>0?`<li>Tuo prezzo medio ${eur(st.avg)} (<span class="${cls(p-st.avg)}">${pct((p/st.avg-1)*100)}</span>)</li>`:''}
+      </ul>
+      <div class="inv">${inv}</div></button>`;
+  }).join('');
+  box.innerHTML=head+cards+'</section>';
+  bindFc();
+  if(!noKick) runForecast(false);
+}
+function bindFc(){
+  const r=$('#fcRefresh'); if(r) r.onclick=()=>runForecast(true);
+  document.querySelectorAll('#forecast .fc').forEach(b=>b.onclick=()=>go('detail',b.dataset.id));
+}
+
+/* ---------- notizie (fonte: cryptocurrency.cv, servizio esterno gratuito) ---------- */
+const NEWS_API='https://cryptocurrency.cv/api';
+const NEWS_TTL=15*60*1000;
+const news={filter:'all',cache:{},busy:false};
+const textOf=s=>{try{return (new DOMParser().parseFromString(String(s||''),'text/html').body.textContent||'').trim();}catch(e){return '';}};
+const safeLink=u=>(typeof u==='string'&&/^https?:\/\//i.test(u))?u:'';
+function ago(d){
+  const t=new Date(d).getTime(); if(!isFinite(t)) return '';
+  const m=Math.max(0,Math.round((Date.now()-t)/60000));
+  if(m<60) return m+' min fa'; const h=Math.round(m/60); if(h<48) return h+' ore fa'; return Math.round(h/24)+' giorni fa';
+}
+async function loadNews(force){
+  const f=news.filter, c=news.cache[f];
+  if(news.busy||(c&&!force&&Date.now()-c.t<NEWS_TTL)) return;
+  news.busy=true; if(view.screen==='notizie') renderNews(true);
+  try{
+    let url=`${NEWS_API}/news?limit=30`;
+    if(f!=='all'){const h=state.holdings[f]; url=`${NEWS_API}/search?q=${encodeURIComponent(h?h.name:f)}&limit=30`;}
+    const d=await getJSON(url);
+    const arr=Array.isArray(d)?d:(d&&(d.articles||d.results||d.data))||[];
+    news.cache[f]={t:Date.now(),items:Array.isArray(arr)?arr.slice(0,30):[]};
+  }catch(e){
+    news.cache[f]={t:Date.now(),items:[],err:e.message};
+  }finally{news.busy=false; if(view.screen==='notizie') renderNews(true);}
+}
+function renderNews(noKick){
+  const box=$('#news');
+  if(news.filter!=='all'&&!state.holdings[news.filter]) news.filter='all';
+  const chips=[['all','Tutte']].concat(Object.values(state.holdings).map(h=>[h.id,h.name]));
+  const c=news.cache[news.filter];
+  let body;
+  if(!c) body='<p class="empty">Caricamento notizie…</p>';
+  else if(c.err) body=`<p class="empty">Fonte notizie non raggiungibile (${esc(c.err)}). Riprova più tardi.</p>`;
+  else if(!c.items.length) body='<p class="empty">Nessuna notizia trovata.</p>';
+  else body=c.items.map(a=>{
+    const link=safeLink(a.link||a.url), title=textOf(a.title), desc=textOf(a.description||a.summary);
+    const src=textOf(typeof a.source==='object'&&a.source?a.source.name:a.source);
+    const when=ago(a.pubDate||a.publishedAt||a.date);
+    const inner=`<div class="t">${esc(title||'Senza titolo')}</div>${desc?`<div class="d">${esc(desc.length>180?desc.slice(0,177)+'…':desc)}</div>`:''}<div class="s">${esc([src,when].filter(Boolean).join(', '))}</div>`;
+    return link?`<a class="news" href="${esc(link)}" target="_blank" rel="noopener noreferrer">${inner}</a>`:`<div class="news">${inner}</div>`;
+  }).join('');
+  box.innerHTML=`<section><h2>Notizie</h2>
+    <p class="intro">Titoli da oltre 300 fonti internazionali, per lo più in inglese. Fonte: cryptocurrency.cv. Una notizia non è un segnale: verifica sempre sulla fonte originale.</p>
+    <div class="chips" role="group" aria-label="Filtro notizie">${chips.map(([k,l])=>`<button class="chip" type="button" data-f="${esc(k)}" aria-pressed="${news.filter===k}">${esc(l)}</button>`).join('')}</div>
+    <div class="bar"><span class="m small">${news.busy?'Aggiornamento…':c&&!c.err?'Aggiornate '+ago(c.t):''}</span><button class="link" id="newsRefresh" type="button">Aggiorna</button></div>
+    ${body}</section>`;
+  document.querySelectorAll('#news .chip').forEach(b=>b.onclick=()=>{news.filter=b.dataset.f; renderNews();});
+  $('#newsRefresh').onclick=()=>loadNews(true);
+  if(!noKick) loadNews(false);
+}
+
+/* ---------- consiglio del giorno ---------- */
+const TIPS=[
+ 'Prima di comprare, decidi a che prezzo usciresti se ti sbagli. Scrivilo e rispettalo.',
+ 'Nessuna singola crypto dovrebbe pesare tanto da toglierti il sonno se scendesse del 50%.',
+ 'Non condividere mai il codice di accesso della Tangem né foto delle carte: nessun supporto legittimo te lo chiederà.',
+ 'Conserva le carte di backup Tangem in luoghi diversi dalla carta principale.',
+ 'Prima di inviare un importo grande, fai una transazione di prova piccola.',
+ 'Controlla sempre i primi e gli ultimi caratteri dell’indirizzo di destinazione: alcuni malware sostituiscono gli indirizzi copiati.',
+ 'Non firmare transazioni di siti o dApp che non conosci: una firma può autorizzare il prelievo dei tuoi token.',
+ 'Dopo un rialzo forte in pochi giorni il rischio di correzione aumenta: evita di inseguire il prezzo per paura di restare fuori.',
+ 'Comprare a rate regolari riduce il rischio di investire tutto nel momento peggiore.',
+ 'Se un token perde molto chiediti: lo ricomprerei oggi a questo prezzo? Se la risposta è no, lo stai tenendo solo per speranza.',
+ 'Tieni una parte in liquidità: ti evita di dover vendere in perdita quando servono soldi.',
+ 'Diffida di rendimenti garantiti e di chi ti contatta in privato con opportunità: è lo schema tipico delle truffe.',
+ 'Conserva lo storico di acquisti e vendite: in Italia le cripto-attività vanno indicate nella dichiarazione dei redditi.',
+ 'Guarda il portafoglio a orari fissi invece che di continuo: le decisioni prese sull’emozione sono spesso le peggiori.',
+ 'I token a bassa capitalizzazione possono perdere quasi tutto il valore in poco tempo: dimensiona la posizione di conseguenza.',
+ 'Installa e aggiorna l’app Tangem solo dagli store ufficiali.'
+];
+function renderTips(){
+  const box=$('#tips'), t=totals(), ids=Object.keys(state.holdings);
+  const now=new Date(); const dayN=Math.floor((now.getTime()-now.getTimezoneOffset()*60000)/86400000);
+  const tip=TIPS[dayN%TIPS.length];
+  const checks=[];
+  if(!ids.length) checks.push(['Portafoglio vuoto','Aggiungi i tuoi token per ricevere controlli personalizzati.']);
+  const rows=ids.map(stats).filter(r=>ok(r.value)&&r.value>0).sort((a,b)=>b.value-a.value);
+  if(rows.length&&t.value>0){
+    const top=rows[0], w=top.value/t.value*100;
+    if(w>=50) checks.push(['Concentrazione alta',`${top.h.name} pesa il ${nfP.format(w)}% del portafoglio: se scendesse del 30%, il totale perderebbe circa il ${nfP.format(w*0.3)}%.`]);
+  }
+  rows.filter(r=>ok(r.pnlPct)&&r.pnlPct<=-30).forEach(r=>checks.push(['Perdita rilevante',`${r.h.name} è a ${pct(r.pnlPct)} dal tuo prezzo medio. Verifica se il motivo dell’acquisto è ancora valido e decidi in anticipo un livello di uscita.`]));
+  rows.filter(r=>ok(r.pnlPct)&&r.pnlPct>=50).forEach(r=>checks.push(['Guadagno rilevante',`${r.h.name} è a ${pct(r.pnlPct)}. Valuta se proteggere una parte del profitto.`]));
+  rows.filter(r=>r.m&&(!r.m.market_cap_rank||r.m.market_cap_rank>200)).forEach(r=>checks.push(['Token a bassa capitalizzazione',`${r.h.name} ${r.m.market_cap_rank?'è al rank #'+r.m.market_cap_rank:'non ha un rank'}: liquidità e volatilità possono essere estreme.`]));
+  if(t.missing) checks.push(['Prezzi mancanti',`${t.missing} token senza prezzo: il saldo mostrato è incompleto.`]);
+  let last=0; try{last=+localStorage.getItem(KEY+'-lastExport')||0;}catch(e){}
+  if(ids.length&&(!last||Date.now()-last>7*86400000)) checks.push(['Backup',last?`L’ultimo backup è di ${ago(last)}. Esportane uno nuovo dalla sezione Portafoglio.`:'Non hai ancora esportato un backup. Fallo dalla sezione Portafoglio: i dati esistono solo su questo telefono.']);
+  if(ids.length&&!checks.length) checks.push(['Nessun avviso','I controlli automatici non hanno trovato situazioni da segnalare oggi.']);
+  box.innerHTML=`<section><h2>Consiglio del giorno</h2>
+    <div class="daytip">${esc(tip)}</div>
+    <p class="intro">Cambia ogni giorno.</p></section>
+    <section><h2>Controlli sul tuo portafoglio</h2>
+    <ul class="checks">${checks.map(([a,b])=>`<li><span class="lv">${esc(a)}</span><br>${esc(b)}</li>`).join('')}</ul>
+    <p class="intro">Regole automatiche basate sui tuoi dati e sui prezzi attuali. Informazioni generali, non consulenza finanziaria.</p></section>`;
+}
+
+/* ---------- navigazione (hash: funziona anche il tasto indietro di Android) ---------- */
+const TABS=['portafoglio','previsioni','notizie','consiglio'];
+const SECTION={portafoglio:'home',detail:'detail',previsioni:'forecast',notizie:'news',consiglio:'tips'};
+let prevScreen=null;
+function parseRoute(){
+  const h=location.hash.replace(/^#\/?/,'');
+  if(h.startsWith('token/')) return {screen:'detail',id:decodeURIComponent(h.slice(6))};
+  if(TABS.includes(h)) return {screen:h};
+  return {screen:'portafoglio'};
+}
+function applyRoute(){
+  const r=parseRoute();
+  if(r.screen==='detail'&&!state.holdings[r.id]){location.replace('#/'); return;}
+  prevScreen=view.routed?view.screen:null;
+  view.routed=true; view.screen=r.screen; view.id=r.id||null; lastChart=null;
+  Object.entries(SECTION).forEach(([k,el])=>{$('#'+el).hidden=k!==r.screen;});
+  const tab=r.screen==='detail'?'portafoglio':r.screen;
+  document.querySelectorAll('.nav a').forEach(a=>{ if(a.dataset.tab===tab) a.setAttribute('aria-current','page'); else a.removeAttribute('aria-current'); });
   render(); window.scrollTo(0,0);
 }
-window.addEventListener('popstate',e=>{
-  if(e.state&&e.state.d&&state.holdings[e.state.d]) go('detail',e.state.d,false); else go('home',null,false);
-});
+function go(screen,id){
+  if(screen==='detail') location.hash='#/token/'+encodeURIComponent(id);
+  else location.replace('#/');
+}
+function goBack(){ if(prevScreen) history.back(); else location.replace('#/'); }
+window.addEventListener('hashchange',applyRoute);
 $('#list').addEventListener('click',e=>{const b=e.target.closest('.row'); if(b) go('detail',b.dataset.id);});
 
 /* ---------- modulo acquisto ---------- */
@@ -616,6 +871,7 @@ $('#exp').onclick=()=>{
   a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));
   a.download='portafoglio-tangem-'+localDate()+'.json';
   document.body.append(a); a.click();
+  try{localStorage.setItem(KEY+'-lastExport',String(Date.now()));}catch(e){}
   setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},1500);
 };
 $('#impFile').onchange=e=>{
@@ -626,7 +882,7 @@ $('#impFile').onchange=e=>{
     e.target.value='';
     if(!valid(s)){alert('File non valido: non è un backup di questa app.'); return;}
     if(!confirm('Sostituire il portafoglio attuale con il backup selezionato?')) return;
-    state={version:1,holdings:s.holdings}; save(); market={}; lastOk=0; go('home',null,false); refreshMarket();
+    state={version:1,holdings:s.holdings}; save(); market={}; lastOk=0; location.replace('#/'); render(); refreshMarket();
   };
   r.onerror=()=>{e.target.value=''; alert('Lettura del file non riuscita.');};
   r.readAsText(f);
@@ -639,7 +895,7 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now(
 setInterval(()=>{if(!document.hidden) refreshMarket();},REFRESH_MS);
 
 load();
-render();
+applyRoute();
 if(lastOk) setStatus('warn','Prezzi salvati delle '+clock(lastOk)+', aggiornamento in corso');
 refreshMarket();
 if('serviceWorker' in navigator && location.protocol==='https:'){
