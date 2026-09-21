@@ -432,7 +432,7 @@ function renderDetail(){
       <div class="s">${esc(sym(h))}${m.market_cap_rank?`, rank #${esc(m.market_cap_rank)}`:''}</div></div></div>
     <div class="price"><span class="big">${eur(s.price)}</span><span class="${cls(s.ch24)}">${pct(s.ch24)} in 24h</span></div>
     <div class="ranges" role="group" aria-label="Periodo del grafico">
-      ${[['1','24h'],['7','7 giorni'],['30','30 giorni'],['365','1 anno']].map(([d,l])=>`<button type="button" data-days="${d}" aria-pressed="${view.days===d}">${l}</button>`).join('')}
+      ${[['1','24h'],['7','7 giorni'],['30','30 giorni'],['365','1 anno'],['c1m','Candele 1m'],['c5m','Candele 5m'],['c1h','Candele 1h']].map(([d,l])=>`<button type="button" data-days="${d}" aria-pressed="${view.days===d}">${l}</button>`).join('')}
     </div>
     <div class="tip" id="tip"></div>
     <div class="chart" id="chart"><p class="m">Caricamento grafico…</p></div>
@@ -501,16 +501,112 @@ async function loadChart(id,days){
 }
 async function loadAndDraw(){
   const id=view.id, days=view.days;
+  const stale=()=>view.screen!=='detail'||view.id!==id||view.days!==days;
   try{
+    if(CANDLE[days]){
+      const r=await loadCandles(id,days);
+      if(stale()) return;
+      lastChart={kind:'c',cs:r.cs,pair:r.pair,conv:r.conv,avg:stats(id).avg,days};
+      drawChart(); return;
+    }
     const pts=await loadChart(id,days);
-    if(view.screen!=='detail'||view.id!==id||view.days!==days) return;
-    lastChart={pts,avg:stats(id).avg,days};
-    drawLine();
+    if(stale()) return;
+    lastChart={kind:'l',pts,avg:stats(id).avg,days};
+    drawChart();
   }catch(e){
-    if(view.screen!=='detail'||view.id!==id||view.days!==days) return;
-    const box=$('#chart');
-    if(box) box.innerHTML=`<p class="m">${e.code===429?'Limite richieste CoinGecko raggiunto: riprova tra un minuto.':'Grafico non disponibile ('+esc(e.message)+').'}</p>`;
+    if(stale()) return;
+    const box=$('#chart'), tip=$('#tip'); if(tip) tip.textContent='';
+    const msg=e.code==='nopair'?'Candele non disponibili: '+esc(e.message)+'.':e.code===429?'Limite richieste raggiunto: riprova tra un minuto.':'Grafico non disponibile ('+esc(e.message)+').';
+    if(box) box.innerHTML=`<p class="m">${msg}</p>`;
   }
+}
+function drawChart(){ if(lastChart&&lastChart.kind==='c') drawCandles(); else drawLine(); }
+
+/* ---------- candele (dati pubblici Binance) ---------- */
+const BN='https://data-api.binance.vision/api/v3';
+const CANDLE={c1m:['1m',20000,'1 minuto'],c5m:['5m',60000,'5 minuti'],c1h:['1h',300000,'1 ora']};
+const pairCache={}, candleCache={};
+async function bnPrice(symbol){
+  const d=await getJSON(`${BN}/ticker/price?symbol=${encodeURIComponent(symbol)}`);
+  const p=parseFloat(d&&d.price); if(!ok(p)||p<=0) throw new Error('prezzo non valido'); return p;
+}
+/* Trova la coppia Binance e verifica che il prezzo coincida (±5%) con CoinGecko:
+   stesso simbolo non significa stesso token. Una coppia non verificata non viene mostrata. */
+async function resolvePair(id){
+  if(pairCache[id]) return pairCache[id];
+  try{const o=JSON.parse(localStorage.getItem(KEY+'-pair-'+id)||'null'); if(o&&Date.now()-o.t<7*86400000){pairCache[id]=o; return o;}}catch(e){}
+  const h=state.holdings[id], m=market[id];
+  const sy=sym(h).replace(/[^A-Z0-9]/g,'');
+  const cg=m&&ok(m.current_price)?m.current_price:null;
+  if(!cg) throw Object.assign(new Error('prezzo di riferimento non ancora disponibile, riprova tra poco'),{code:'nopair'});
+  let res={t:Date.now(),none:true,why:'questo token non è quotato su Binance'};
+  if(sy&&!['EUR','USDT','USDC'].includes(sy)){
+    try{ const p=await bnPrice(sy+'EUR'); if(Math.abs(p/cg-1)<0.05) res={t:Date.now(),pair:sy+'EUR',conv:1}; }
+    catch(e){ if(e.code!==400) throw e; }
+    if(res.none){
+      try{
+        const p=await bnPrice(sy+'USDT'), fx=await bnPrice('EURUSDT'), conv=1/fx;
+        if(Math.abs(p*conv/cg-1)<0.05) res={t:Date.now(),pair:sy+'USDT',conv};
+        else res.why='su Binance il simbolo '+sy+' ha un prezzo diverso, probabilmente è un altro progetto';
+      }catch(e){ if(e.code!==400) throw e; }
+    }
+  }
+  pairCache[id]=res; try{localStorage.setItem(KEY+'-pair-'+id,JSON.stringify(res));}catch(e){}
+  return res;
+}
+async function loadCandles(id,key){
+  const [iv,ttl]=CANDLE[key], k=id+'|'+key, c=candleCache[k];
+  if(c&&Date.now()-c.t<ttl) return c;
+  const pr=await resolvePair(id);
+  if(pr.none) throw Object.assign(new Error(pr.why),{code:'nopair'});
+  const d=await getJSON(`${BN}/klines?symbol=${pr.pair}&interval=${iv}&limit=120`);
+  const cs=(Array.isArray(d)?d:[]).map(r=>({t:+r[0],o:parseFloat(r[1])*pr.conv,h:parseFloat(r[2])*pr.conv,l:parseFloat(r[3])*pr.conv,c:parseFloat(r[4])*pr.conv}))
+    .filter(x=>ok(x.t)&&ok(x.o)&&ok(x.h)&&ok(x.l)&&ok(x.c));
+  candleCache[k]={t:Date.now(),cs,pair:pr.pair,conv:pr.conv};
+  return candleCache[k];
+}
+function drawCandles(){
+  const box=$('#chart'), tip=$('#tip');
+  if(!box||!lastChart) return;
+  const {cs,avg,days,pair,conv}=lastChart;
+  if(cs.length<2){box.innerHTML='<p class="m">Dati insufficienti per il grafico.</p>'; tip.textContent=''; return;}
+  const W=Math.max(280,Math.round(box.clientWidth)), H=230, pl=4, pr=4, pt=16, pb=24;
+  let lo=Infinity, hi=-Infinity; cs.forEach(c=>{if(c.l<lo)lo=c.l; if(c.h>hi)hi=c.h;});
+  let min=lo, max=hi;
+  const showAvg=avg>0&&avg>=lo*0.97&&avg<=hi*1.03;
+  if(showAvg){min=Math.min(min,avg); max=Math.max(max,avg);}
+  if(max===min){const e=Math.abs(max)*0.01||1e-9; max+=e; min-=e;}
+  const padv=(max-min)*0.06; min-=padv; max+=padv;
+  const n=cs.length, cw=(W-pl-pr)/n, bw=Math.max(1,cw*0.7);
+  const Y=v=>pt+(1-(v-min)/(max-min))*(H-pt-pb);
+  const fT=t=>days==='c1h'?new Date(t).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):new Date(t).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+  let body='';
+  cs.forEach((c,i)=>{
+    const x=pl+cw*i+cw/2, col=c.c>=c.o?'var(--up)':'var(--down)';
+    const y1=Y(Math.max(c.o,c.c)), y2=Y(Math.min(c.o,c.c));
+    body+=`<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${Y(c.h).toFixed(1)}" y2="${Y(c.l).toFixed(1)}" stroke="${col}" stroke-width="1"/><rect x="${(x-bw/2).toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,y2-y1).toFixed(1)}" fill="${col}"/>`;
+  });
+  let avgSvg='';
+  if(showAvg){const y=Y(avg).toFixed(1); avgSvg=`<line x1="${pl}" x2="${W-pr}" y1="${y}" y2="${y}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4"/><text x="${pl+2}" y="${(Y(avg)-5).toFixed(1)}" font-size="11" fill="var(--muted)">Tuo prezzo medio ${esc(eur(avg))}</text>`;}
+  box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Grafico a candele">
+    ${body}${avgSvg}
+    <text x="${pl}" y="${H-6}" font-size="11" fill="var(--muted)">${esc(fT(cs[0].t))}</text>
+    <text x="${W-pr}" y="${H-6}" font-size="11" fill="var(--muted)" text-anchor="end">${esc(fT(cs[n-1].t))}</text>
+    <line id="cx" y1="${pt}" y2="${H-pb}" stroke="var(--muted)" stroke-width="1" visibility="hidden"/>
+  </svg>`;
+  const last=cs[n-1];
+  const baseTip=`Candele da ${CANDLE[days][2]}, coppia Binance ${esc(pair)}${conv!==1?' convertita in euro al cambio attuale':''}. Ultima chiusura ${esc(eur(last.c))}, minimo ${esc(eur(lo))}, massimo ${esc(eur(hi))}. Tocca una candela per i dettagli.`;
+  tip.innerHTML=baseTip;
+  const svg=box.querySelector('svg'), cx=svg.querySelector('#cx');
+  svg.addEventListener('pointermove',e=>{
+    const r=svg.getBoundingClientRect(); if(!r.width) return;
+    const x=(e.clientX-r.left)*(W/r.width);
+    const i=Math.min(n-1,Math.max(0,Math.floor((x-pl)/cw))), c=cs[i];
+    const px=(pl+cw*i+cw/2).toFixed(1);
+    cx.setAttribute('x1',px); cx.setAttribute('x2',px); cx.setAttribute('visibility','visible');
+    tip.innerHTML=`${esc(fT(c.t))}: apertura ${esc(eur(c.o))}, massimo ${esc(eur(c.h))}, minimo ${esc(eur(c.l))}, chiusura ${esc(eur(c.c))} (<span class="${cls(c.c-c.o)}">${pct((c.c/c.o-1)*100)}</span>)`;
+  });
+  svg.addEventListener('pointerleave',()=>{cx.setAttribute('visibility','hidden'); tip.innerHTML=baseTip;});
 }
 function drawLine(){
   const box=$('#chart'), tip=$('#tip');
@@ -614,10 +710,14 @@ async function runForecast(force){
         if(e.code===429){backoffUntil=Date.now()+90000; ta[id]={t:Date.now(),closes:[],err:'Limite richieste CoinGecko: riprovo più tardi'}; break;}
         ta[id]={t:Date.now(),closes:[],err:'Dati non disponibili ('+e.message+')'};
       }
-      if(view.screen==='previsioni') renderForecast(true);
+      refreshTaViews();
       await new Promise(r=>setTimeout(r,2500));
     }
-  }finally{taBusy=false; if(view.screen==='previsioni') renderForecast(true);}
+  }finally{taBusy=false; refreshTaViews();}
+}
+function refreshTaViews(){
+  if(view.screen==='previsioni') renderForecast(true);
+  else if(view.screen==='consiglio') renderTips(true);
 }
 function renderForecast(noKick){
   const box=$('#forecast'), ids=Object.keys(state.holdings);
@@ -714,49 +814,82 @@ function renderNews(noKick){
   if(!noKick) loadNews(false);
 }
 
-/* ---------- consiglio del giorno ---------- */
+/* ---------- consiglio del giorno e piano operativo ---------- */
 const TIPS=[
- 'Prima di comprare, decidi a che prezzo usciresti se ti sbagli. Scrivilo e rispettalo.',
- 'Nessuna singola crypto dovrebbe pesare tanto da toglierti il sonno se scendesse del 50%.',
- 'Non condividere mai il codice di accesso della Tangem né foto delle carte: nessun supporto legittimo te lo chiederà.',
- 'Conserva le carte di backup Tangem in luoghi diversi dalla carta principale.',
- 'Prima di inviare un importo grande, fai una transazione di prova piccola.',
- 'Controlla sempre i primi e gli ultimi caratteri dell’indirizzo di destinazione: alcuni malware sostituiscono gli indirizzi copiati.',
- 'Non firmare transazioni di siti o dApp che non conosci: una firma può autorizzare il prelievo dei tuoi token.',
- 'Dopo un rialzo forte in pochi giorni il rischio di correzione aumenta: evita di inseguire il prezzo per paura di restare fuori.',
- 'Comprare a rate regolari riduce il rischio di investire tutto nel momento peggiore.',
- 'Se un token perde molto chiediti: lo ricomprerei oggi a questo prezzo? Se la risposta è no, lo stai tenendo solo per speranza.',
- 'Tieni una parte in liquidità: ti evita di dover vendere in perdita quando servono soldi.',
- 'Diffida di rendimenti garantiti e di chi ti contatta in privato con opportunità: è lo schema tipico delle truffe.',
- 'Conserva lo storico di acquisti e vendite: in Italia le cripto-attività vanno indicate nella dichiarazione dei redditi.',
- 'Guarda il portafoglio a orari fissi invece che di continuo: le decisioni prese sull’emozione sono spesso le peggiori.',
- 'I token a bassa capitalizzazione possono perdere quasi tutto il valore in poco tempo: dimensiona la posizione di conseguenza.',
- 'Installa e aggiorna l’app Tangem solo dagli store ufficiali.'
+ 'Non comprare mai senza sapere dove esci: stop e obiettivi si decidono prima dell’acquisto, non dopo.',
+ 'Rischia al massimo l’1–2% del portafoglio per operazione: anche 10 perdite di fila non ti mettono fuori gioco.',
+ 'Prendi profitto a scaglioni: vendere un terzo al primo obiettivo rende molto più facile tenere il resto.',
+ 'Quando il guadagno supera il rischio iniziale, sposta lo stop al tuo prezzo medio: da lì l’operazione non chiude in perdita, salvo crolli improvvisi.',
+ 'Compra la forza, non la debolezza: preferisci token sopra la media a 20 giorni.',
+ 'Con RSI sopra 70 non inseguire: è il momento di valutare prese di profitto, non nuovi acquisti.',
+ 'Usa ordini limite invece che a mercato: scegli tu il prezzo e spesso paghi commissioni più basse.',
+ 'Non mediare al ribasso un token in tendenza ribassista: aumenti l’esposizione proprio dove il mercato ti dà torto.',
+ 'Entra solo se il primo obiettivo vale almeno il doppio del rischio: con un rapporto 2 a 1 puoi sbagliare metà delle volte e restare in guadagno.',
+ 'Dopo due perdite consecutive, dimezza la dimensione della posizione successiva finché non torni in positivo.',
+ 'Tieni un diario: prezzo, motivo, stop e risultato di ogni operazione. Dopo 20 operazioni sai cosa funziona davvero per te.',
+ 'Evita nuovi ingressi nelle ore dei grandi dati macro USA (inflazione, decisioni della Fed): la volatilità fa scattare gli stop a caso.',
+ 'Un profitto non incassato non è un profitto: fissa in anticipo a che prezzo vendere, prima che il prezzo ci arrivi.',
+ 'I token piccoli si muovono molto in entrambe le direzioni: posizioni più piccole e obiettivi più vicini.',
+ 'Non spostare mai lo stop più in basso per evitare una perdita: si sposta solo verso l’alto.',
+ 'Non condividere mai il codice di accesso della Tangem né foto delle carte: nessun supporto legittimo te lo chiederà.'
 ];
-function renderTips(){
+/* Piano basato su regole: stop = 2 giorni di volatilità tipica sotto il prezzo; obiettivi a 2R e 3R;
+   stop portato al prezzo medio quando il guadagno supera R; nuovo ingresso con rischio 1% del portafoglio, max 20%. */
+function plan(id,V){
+  const h=state.holdings[id], m=market[id]||{}, c=taLoadCache(id), st=stats(id);
+  if(!c) return {h,wait:'Dati in caricamento…'};
+  if(c.err) return {h,wait:c.err};
+  const a=analyze(c.closes); if(!a) return {h,wait:'Storico prezzi troppo breve per un piano.'};
+  const p=ok(m.current_price)?m.current_price:a.last;
+  const volStop=p*Math.exp(-2*a.sd), R=p-volStop;
+  const moved=st.avg>0&&p-st.avg>R&&st.avg>volStop;
+  const stop=moved?st.avg:volStop;
+  const t1=p+2*R, t2=p+3*R;
+  let action, tone;
+  if(a.trend==='down'){action=`Tendenza ribassista: non aggiungere. Se tieni, esci con chiusura sotto ${eur(stop)}.`; tone='down';}
+  else if(a.rsi>=70){action=`Ipercomprato (RSI ${nfP.format(a.rsi)}): non comprare ora. Valuta di vendere un terzo (${qf(st.qty/3)} ${sym(h)}) sui rialzi.`; tone='side';}
+  else if(a.trend==='up'){action=`Tendenza favorevole: puoi tenere con stop a ${eur(stop)}.`; tone='up';}
+  else {action=`Laterale: nessun nuovo acquisto finché non chiude sopra ${eur(a.hi30)}.`; tone='side';}
+  const size=(V>0&&R>0&&a.trend==='up'&&a.rsi<70)?Math.min(0.01*V/R*p,0.2*V):null;
+  return {h,p,a,stop,moved,R,t1,t2,st,action,tone,size};
+}
+function renderTips(noKick){
   const box=$('#tips'), t=totals(), ids=Object.keys(state.holdings);
   const now=new Date(); const dayN=Math.floor((now.getTime()-now.getTimezoneOffset()*60000)/86400000);
   const tip=TIPS[dayN%TIPS.length];
+  const plans=ids.map(id=>{
+    const P=plan(id,t.value);
+    const head=`<div class="fc-h"><div><span class="n">${esc(P.h.name)}</span><br><span class="s">${esc(sym(P.h))}</span></div>`;
+    if(P.wait) return `<div class="fc">${head}</div><p class="m small" style="margin:8px 0 0">${esc(P.wait)}</p></div>`;
+    const lab={up:'Tieni',down:'Difendi',side:'Attendi'}[P.tone];
+    return `<div class="fc">${head}<span class="badge ${P.tone}">${lab}</span></div>
+      <p style="margin:10px 0 0;font-weight:600">${P.action}</p>
+      <ul>
+        <li>Stop: ${eur(P.stop)} (<span class="down">${pct((P.stop/P.p-1)*100)}</span>)${P.moved?', portato al tuo prezzo medio: l’operazione è protetta':P.st.avg>0&&P.stop>=P.st.avg?', sopra il tuo prezzo medio: chiuderesti comunque in guadagno':''}</li>
+        <li>Obiettivo 1: ${eur(P.t1)} (<span class="up">${pct((P.t1/P.p-1)*100)}</span>) → vendi un terzo, ${qf(P.st.qty/3)} ${esc(sym(P.h))}</li>
+        <li>Obiettivo 2: ${eur(P.t2)} (<span class="up">${pct((P.t2/P.p-1)*100)}</span>) → vendi un altro terzo; il resto lo tieni con lo stop alzato</li>
+        ${P.size!=null?`<li>Nuovo acquisto massimo: ${eur(P.size)} (se scatta lo stop perdi circa l’1% del portafoglio)</li>`:'<li>Nuovi acquisti: sconsigliati con la situazione attuale</li>'}
+      </ul></div>`;
+  }).join('');
   const checks=[];
-  if(!ids.length) checks.push(['Portafoglio vuoto','Aggiungi i tuoi token per ricevere controlli personalizzati.']);
   const rows=ids.map(stats).filter(r=>ok(r.value)&&r.value>0).sort((a,b)=>b.value-a.value);
   if(rows.length&&t.value>0){
     const top=rows[0], w=top.value/t.value*100;
     if(w>=50) checks.push(['Concentrazione alta',`${top.h.name} pesa il ${nfP.format(w)}% del portafoglio: se scendesse del 30%, il totale perderebbe circa il ${nfP.format(w*0.3)}%.`]);
   }
-  rows.filter(r=>ok(r.pnlPct)&&r.pnlPct<=-30).forEach(r=>checks.push(['Perdita rilevante',`${r.h.name} è a ${pct(r.pnlPct)} dal tuo prezzo medio. Verifica se il motivo dell’acquisto è ancora valido e decidi in anticipo un livello di uscita.`]));
-  rows.filter(r=>ok(r.pnlPct)&&r.pnlPct>=50).forEach(r=>checks.push(['Guadagno rilevante',`${r.h.name} è a ${pct(r.pnlPct)}. Valuta se proteggere una parte del profitto.`]));
-  rows.filter(r=>r.m&&(!r.m.market_cap_rank||r.m.market_cap_rank>200)).forEach(r=>checks.push(['Token a bassa capitalizzazione',`${r.h.name} ${r.m.market_cap_rank?'è al rank #'+r.m.market_cap_rank:'non ha un rank'}: liquidità e volatilità possono essere estreme.`]));
-  if(t.missing) checks.push(['Prezzi mancanti',`${t.missing} token senza prezzo: il saldo mostrato è incompleto.`]);
+  rows.filter(r=>ok(r.pnlPct)&&r.pnlPct<=-30).forEach(r=>checks.push(['Perdita rilevante',`${r.h.name} è a ${pct(r.pnlPct)} dal tuo prezzo medio. Se il piano dice “Difendi”, rispetta lo stop invece di sperare nel recupero.`]));
+  rows.filter(r=>ok(r.pnlPct)&&r.pnlPct>=50).forEach(r=>checks.push(['Guadagno da proteggere',`${r.h.name} è a ${pct(r.pnlPct)}. Incassare almeno un terzo trasforma un guadagno sulla carta in un guadagno reale.`]));
+  rows.filter(r=>r.m&&(!r.m.market_cap_rank||r.m.market_cap_rank>200)).forEach(r=>checks.push(['Token a bassa capitalizzazione',`${r.h.name} ${r.m.market_cap_rank?'è al rank #'+r.m.market_cap_rank:'non ha un rank'}: usa posizioni piccole, gli stop possono scattare con salti di prezzo.`]));
+  if(t.missing) checks.push(['Prezzi mancanti',`${t.missing} token senza prezzo: il saldo e i piani sono incompleti.`]);
   let last=0; try{last=+localStorage.getItem(KEY+'-lastExport')||0;}catch(e){}
   if(ids.length&&(!last||Date.now()-last>7*86400000)) checks.push(['Backup',last?`L’ultimo backup è di ${ago(last)}. Esportane uno nuovo dalla sezione Portafoglio.`:'Non hai ancora esportato un backup. Fallo dalla sezione Portafoglio: i dati esistono solo su questo telefono.']);
-  if(ids.length&&!checks.length) checks.push(['Nessun avviso','I controlli automatici non hanno trovato situazioni da segnalare oggi.']);
-  box.innerHTML=`<section><h2>Consiglio del giorno</h2>
-    <div class="daytip">${esc(tip)}</div>
-    <p class="intro">Cambia ogni giorno.</p></section>
-    <section><h2>Controlli sul tuo portafoglio</h2>
-    <ul class="checks">${checks.map(([a,b])=>`<li><span class="lv">${esc(a)}</span><br>${esc(b)}</li>`).join('')}</ul>
-    <p class="intro">Regole automatiche basate sui tuoi dati e sui prezzi attuali. Informazioni generali, non consulenza finanziaria.</p></section>`;
+  box.innerHTML=`<section><h2>Regola del giorno</h2>
+    <div class="daytip">${esc(tip)}</div></section>
+    <section><h2>Piano operativo</h2>
+    <p class="intro">Livelli calcolati automaticamente con regole di gestione del rischio: stop a 2 giorni di volatilità tipica, obiettivi a 2 e 3 volte il rischio, nuovo acquisto dimensionato per rischiare l’1% del portafoglio. Nessuna regola garantisce profitti: verifica i livelli prima di operare. Non è consulenza finanziaria.</p>
+    ${ids.length?plans:'<p class="empty">Aggiungi i tuoi token per ricevere un piano.</p>'}</section>
+    ${checks.length?`<section><h2>Controlli sul portafoglio</h2><ul class="checks">${checks.map(([a,b])=>`<li><span class="lv">${esc(a)}</span><br>${esc(b)}</li>`).join('')}</ul></section>`:''}`;
+  if(!noKick) runForecast(false);
 }
 
 /* ---------- navigazione (hash: funziona anche il tasto indietro di Android) ---------- */
@@ -890,7 +1023,7 @@ $('#impFile').onchange=e=>{
 
 /* ---------- avvio ---------- */
 $('#refresh').onclick=()=>refreshMarket();
-let rsT; window.addEventListener('resize',()=>{clearTimeout(rsT); rsT=setTimeout(drawLine,150);});
+let rsT; window.addEventListener('resize',()=>{clearTimeout(rsT); rsT=setTimeout(drawChart,150);});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()-lastOk>REFRESH_MS/2) refreshMarket();});
 setInterval(()=>{if(!document.hidden) refreshMarket();},REFRESH_MS);
 
