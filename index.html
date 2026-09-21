@@ -550,9 +550,17 @@ function drawChart(){ if(lastChart&&lastChart.kind==='c') drawCandles(); else dr
 const BN='https://data-api.binance.vision/api/v3';
 const CANDLE={c1m:['1m',20000,'1 minuto'],c5m:['5m',60000,'5 minuti'],c1h:['1h',300000,'1 ora']};
 const pairCache={}, candleCache={};
-async function bnPrice(symbol){
-  const d=await getJSON(`${BN}/ticker/price?symbol=${encodeURIComponent(symbol)}`);
-  const p=parseFloat(d&&d.price); if(!ok(p)||p<=0) throw new Error('prezzo non valido'); return p;
+/* Un'unica richiesta con tutti i prezzi Binance: evita di interrogare coppie inesistenti,
+   che rispondono con un errore non leggibile dal browser ("Failed to fetch"). */
+let bnAllC=null;
+async function bnAll(){
+  if(bnAllC&&Date.now()-bnAllC.t<3600000) return bnAllC.map;
+  const d=await getJSON(`${BN}/ticker/price`);
+  const map={};
+  (Array.isArray(d)?d:[]).forEach(x=>{const p=parseFloat(x&&x.price); if(x&&typeof x.symbol==='string'&&ok(p)&&p>0) map[x.symbol]=p;});
+  if(!Object.keys(map).length) throw new Error('elenco coppie Binance vuoto');
+  bnAllC={t:Date.now(),map};
+  return map;
 }
 /* Trova la coppia Binance e verifica che il prezzo coincida (±5%) con CoinGecko:
    stesso simbolo non significa stesso token. Una coppia non verificata non viene mostrata. */
@@ -563,17 +571,13 @@ async function resolvePair(id){
   const sy=sym(h).replace(/[^A-Z0-9]/g,'');
   const cg=m&&ok(m.current_price)?m.current_price:null;
   if(!cg) throw Object.assign(new Error('prezzo di riferimento non ancora disponibile, riprova tra poco'),{code:'nopair'});
+  const M=await bnAll();
   let res={t:Date.now(),none:true,why:'questo token non è quotato su Binance'};
   if(sy&&!['EUR','USDT','USDC'].includes(sy)){
-    try{ const p=await bnPrice(sy+'EUR'); if(Math.abs(p/cg-1)<0.05) res={t:Date.now(),pair:sy+'EUR',conv:1}; }
-    catch(e){ if(e.code!==400) throw e; }
-    if(res.none){
-      try{
-        const p=await bnPrice(sy+'USDT'), fx=await bnPrice('EURUSDT'), conv=1/fx;
-        if(Math.abs(p*conv/cg-1)<0.05) res={t:Date.now(),pair:sy+'USDT',conv};
-        else res.why='su Binance il simbolo '+sy+' ha un prezzo diverso, probabilmente è un altro progetto';
-      }catch(e){ if(e.code!==400) throw e; }
-    }
+    const pe=M[sy+'EUR'], pu=M[sy+'USDT'], fx=M['EURUSDT'];
+    if(pe&&Math.abs(pe/cg-1)<0.05) res={t:Date.now(),pair:sy+'EUR',conv:1};
+    else if(pu&&fx&&Math.abs(pu/fx/cg-1)<0.05) res={t:Date.now(),pair:sy+'USDT',conv:1/fx};
+    else if(pe||pu) res.why='su Binance il simbolo '+sy+' ha un prezzo diverso, probabilmente è un altro progetto';
   }
   pairCache[id]=res; try{localStorage.setItem(KEY+'-pair-'+id,JSON.stringify(res));}catch(e){}
   return res;
