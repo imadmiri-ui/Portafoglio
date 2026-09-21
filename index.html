@@ -93,7 +93,7 @@ footer{margin:28px 0 36px}
 
 /* Modulo */
 .sheet{position:fixed;inset:0;z-index:20;background:rgba(5,12,20,.5);display:flex;align-items:flex-end;justify-content:center}
-.sheet[hidden]{display:none}
+.sheet[hidden],.card [hidden]{display:none}
 .card{background:var(--surface);width:100%;max-width:720px;max-height:92%;overflow:auto;border-radius:16px 16px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom,0px))}
 .card label,.card fieldset{display:block;margin-top:14px}
 .card fieldset{border:0;padding:0}
@@ -237,6 +237,31 @@ details.set label{display:block;margin-top:12px;font-size:14px}
   </div>
 </div>
 
+<div id="sellSheet" class="sheet" hidden>
+  <div class="card" role="dialog" aria-modal="true" aria-labelledby="sellTitle">
+    <h2 id="sellTitle">Registra vendita o uscita</h2>
+    <p id="sellInfo" class="m small"></p>
+    <fieldset>
+      <legend>Tipo</legend>
+      <div class="seg">
+        <label><input type="radio" name="sk" value="sell" checked> Vendita</label>
+        <label><input type="radio" name="sk" value="out"> Uscita senza incasso</label>
+      </div>
+    </fieldset>
+    <label>Quantità<input id="sQty" class="inp" inputmode="decimal" autocomplete="off" placeholder="Es. 200,346"></label>
+    <button type="button" class="link" id="sMax">Usa tutta la quantità</button>
+    <label id="sPriceL">Prezzo di vendita per unità in euro<input id="sPrice" class="inp" inputmode="decimal" autocomplete="off"></label>
+    <label id="sFeeL">Commissione pagata in euro (facoltativa)<input id="sFee" class="inp" inputmode="decimal" autocomplete="off" placeholder="0"></label>
+    <label>Data<input id="sDate" class="inp" type="date"></label>
+    <div id="sPrev" class="preview"></div>
+    <p id="sErr" class="err" role="alert"></p>
+    <div class="actions">
+      <button type="button" id="sCancel" class="ghost">Annulla</button>
+      <button type="button" id="sSave" class="primary">Salva</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
 'use strict';
@@ -291,7 +316,8 @@ function parseNum(s){
 function valid(s){
   if(!s||typeof s!=='object'||!s.holdings||typeof s.holdings!=='object') return false;
   return Object.entries(s.holdings).every(([k,h])=>h&&h.id===k&&typeof h.name==='string'&&Array.isArray(h.lots)&&
-    h.lots.every(l=>l&&ok(l.qty)&&l.qty>0&&ok(l.unit)&&l.unit>=0));
+    h.lots.every(l=>l&&ok(l.qty)&&l.qty>0&&ok(l.unit)&&l.unit>=0)&&
+    (h.sales===undefined||(Array.isArray(h.sales)&&h.sales.every(x=>x&&ok(x.qty)&&x.qty>0&&ok(x.price)&&x.price>=0&&ok(x.fee)&&x.fee>=0))));
 }
 function load(){
   try{
@@ -348,18 +374,30 @@ async function refreshMarket(){
 }
 
 /* ---------- calcoli ---------- */
+/* Costo medio ponderato: acquisti e vendite in ordine di data (a parità di data prima gli acquisti).
+   Una vendita toglie quantità al prezzo medio del momento; il risultato è il profitto realizzato. */
+function ledger(h){
+  const ev=h.lots.map((l,i)=>({b:1,d:l.date||'',i,q:l.qty,u:l.unit}))
+    .concat((h.sales||[]).map((x,i)=>({b:0,d:x.date||'',i,q:x.qty,p:x.price||0,f:x.fee||0})));
+  ev.sort((a,b)=>a.d.localeCompare(b.d)||(b.b-a.b)||(a.i-b.i));
+  let q=0,c=0,real=0;
+  for(const e of ev){
+    if(e.b){q+=e.q; c+=e.q*e.u;}
+    else{const take=Math.min(e.q,q), avg=q>0?c/q:0; c-=take*avg; q-=take; real+=take*e.p-e.f-take*avg;}
+  }
+  if(q<1e-12){q=0; c=0;}
+  return {qty:q,cost:c,avg:q>0?c/q:0,realized:real};
+}
 function stats(id){
   const h=state.holdings[id], m=market[id]||null;
-  const qty=h.lots.reduce((a,l)=>a+l.qty,0);
-  const cost=h.lots.reduce((a,l)=>a+l.qty*l.unit,0);
-  const avg=qty>0?cost/qty:0;
+  const L=ledger(h), qty=L.qty, cost=L.cost, avg=L.avg;
   const price=m&&ok(m.current_price)?m.current_price:null;
   const value=price!=null?qty*price:null;
   const pnl=value!=null?value-cost:null;
   const pnlPct=(pnl!=null&&cost>0)?pnl/cost*100:null;
   const ch24=m?(ok(m.price_change_percentage_24h_in_currency)?m.price_change_percentage_24h_in_currency:(ok(m.price_change_percentage_24h)?m.price_change_percentage_24h:null)):null;
   const value24=(value!=null&&ch24!=null&&ch24>-100)?value/(1+ch24/100):null;
-  return {id,h,m,qty,cost,avg,price,value,pnl,pnlPct,ch24,value24};
+  return {id,h,m,qty,cost,avg,price,value,pnl,pnlPct,ch24,value24,realized:L.realized};
 }
 function totals(){
   let value=0,costP=0,v24=0,missing=0,has24=true,n=0;
@@ -461,6 +499,7 @@ function renderDetail(){
   $('#dSub').innerHTML=`${esc(sym(h))}${m.market_cap_rank?`, rank #${esc(m.market_cap_rank)}`:''}`;
   $('#dPrice').innerHTML=`<span class="big">${eur(s.price)}</span><span class="${cls(s.ch24)}">${pct(s.ch24)} in 24h</span>`;
   const lots=h.lots.slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  const sales=(h.sales||[]).slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
   $('#dInfo').innerHTML=`
     <section><h2>La tua posizione</h2><dl class="kv">
       ${kv('Quantità',qf(s.qty)+' '+esc(sym(h)))}
@@ -470,6 +509,7 @@ function renderDetail(){
       ${kv('Profitto / perdita',eurS(s.pnl),cls(s.pnl))}
       ${kv('Rendimento sul costo',pct(s.pnlPct),cls(s.pnlPct))}
       ${kv('Peso nel portafoglio',ok(w)?nfP.format(w)+'%':'—')}
+      ${sales.length?kv('Profitto realizzato',eurS(s.realized),cls(s.realized)):''}
     </dl></section>
     <section><h2>Mercato</h2><dl class="kv">
       ${kv('Variazione 1h',pct(m.price_change_percentage_1h_in_currency),cls(m.price_change_percentage_1h_in_currency))}
@@ -489,14 +529,22 @@ function renderDetail(){
       ${lots.map(l=>{
         const lp=s.price!=null?(s.price-l.unit)*l.qty:null;
         return `<li><span>${dIt(l.date)}: ${qf(l.qty)} a ${eur(l.unit)}<br><span class="s">Costo ${eur(l.qty*l.unit)}, oggi <span class="${cls(lp)}">${eurS(lp)}</span></span></span>
-          <button class="del" type="button" data-lot="${esc(l.id)}">Elimina</button></li>`;
+          <span style="display:flex;gap:14px;align-items:start"><button class="link" type="button" data-edit="${esc(l.id)}">Modifica</button><button class="del" type="button" data-lot="${esc(l.id)}">Elimina</button></span></li>`;
       }).join('')}
     </ul>
-    <button class="primary" id="addHere" type="button">Aggiungi acquisto di ${esc(h.name)}</button></section>
+    <button class="primary" id="addHere" type="button">Aggiungi acquisto di ${esc(h.name)}</button>
+    <button class="ghost" id="sellHere" type="button" style="width:100%;margin-top:10px">Registra vendita o uscita</button></section>
+    ${sales.length?`<section><h2>Vendite e uscite (${sales.length})</h2><ul class="lots">
+      ${sales.map(x=>`<li><span>${dIt(x.date)}: ${x.kind==='out'?'usciti':'venduti'} ${qf(x.qty)}${x.kind==='out'?'':' a '+eur(x.price)}<br><span class="s">${x.kind==='out'?'Senza incasso':`Incasso ${eur(x.qty*x.price)}${x.fee?`, commissione ${eur(x.fee)}`:''}`}</span></span>
+        <button class="del" type="button" data-sale="${esc(x.id)}">Elimina</button></li>`).join('')}
+    </ul></section>`:''}
     <button class="danger" id="rm" type="button">Rimuovi ${esc(h.name)} dal portafoglio</button>
     <p class="m small" style="margin-bottom:36px">${s.m?`Dato di mercato CoinGecko del ${esc(m.last_updated?new Date(m.last_updated).toLocaleString('it-IT'):'n/d')}. Il valore di posizione usa solo gli acquisti inseriti, non legge il wallet Tangem.`:'Prezzo non disponibile per questo token su CoinGecko.'}</p>`;
-  document.querySelectorAll('#dInfo .del').forEach(b=>b.onclick=()=>delLot(id,b.dataset.lot));
+  document.querySelectorAll('#dInfo [data-lot]').forEach(b=>b.onclick=()=>delLot(id,b.dataset.lot));
+  document.querySelectorAll('#dInfo [data-sale]').forEach(b=>b.onclick=()=>delSale(id,b.dataset.sale));
+  document.querySelectorAll('#dInfo [data-edit]').forEach(b=>b.onclick=()=>{const l=h.lots.find(x=>x.id===b.dataset.edit); if(l) openSheet({id:h.id,name:h.name,symbol:h.symbol,thumb:h.thumb},l);});
   $('#addHere').onclick=()=>openSheet({id:h.id,name:h.name,symbol:h.symbol,thumb:h.thumb});
+  $('#sellHere').onclick=()=>openSell(id);
   $('#rm').onclick=()=>{
     if(!confirm(`Rimuovere ${h.name} e tutti i suoi ${h.lots.length} acquisti?`)) return;
     delete state.holdings[id]; save(); location.replace('#/');
@@ -509,7 +557,14 @@ function delLot(id,lotId){
   const l=h.lots.find(x=>x.id===lotId); if(!l) return;
   if(!confirm(`Eliminare l'acquisto di ${qf(l.qty)} ${sym(h)} a ${eur(l.unit)}?`)) return;
   h.lots=h.lots.filter(x=>x.id!==lotId);
-  if(!h.lots.length){delete state.holdings[id]; save(); location.replace('#/'); return;}
+  if(!h.lots.length&&!(h.sales&&h.sales.length)){delete state.holdings[id]; save(); location.replace('#/'); return;}
+  save(); lastChart=null; render();
+}
+function delSale(id,saleId){
+  const h=state.holdings[id]; if(!h||!h.sales) return;
+  const x=h.sales.find(s=>s.id===saleId); if(!x) return;
+  if(!confirm(`Eliminare la registrazione di ${qf(x.qty)} ${sym(h)} ${x.kind==='out'?'usciti':'venduti'}? La quantità tornerà nel portafoglio.`)) return;
+  h.sales=h.sales.filter(s=>s.id!==saleId);
   save(); lastChart=null; render();
 }
 
@@ -1285,11 +1340,16 @@ window.addEventListener('hashchange',applyRoute);
 $('#list').addEventListener('click',e=>{const b=e.target.closest('.row'); if(b) go('detail',b.dataset.id);});
 
 /* ---------- modulo acquisto ---------- */
-let picked=null, searchT=null, searchSeq=0;
-function openSheet(pre){
-  picked=null; $('#q').value=''; $('#results').innerHTML=''; $('#qty').value=''; $('#cost').value='';
+let picked=null, searchT=null, searchSeq=0, editLot=null;
+function openSheet(pre,lot){
+  picked=null; editLot=lot?lot.id:null; $('#q').value=''; $('#results').innerHTML=''; $('#qty').value=''; $('#cost').value='';
   $('#date').value=localDate(); $('#formErr').textContent='';
+  $('#sheetTitle').textContent=lot?'Modifica acquisto':'Aggiungi acquisto';
+  $('#saveLot').textContent=lot?'Salva modifiche':'Salva acquisto';
+  document.querySelector('input[name=cm][value=unit]').checked=true;
+  if(lot){$('#qty').value=String(lot.qty).replace('.',','); $('#cost').value=String(lot.unit).replace('.',','); $('#date').value=lot.date||'';}
   if(pre) pickCoin(pre); else {$('#picked').hidden=true; $('#qwrap').hidden=false;}
+  if(lot){const u=$('#unpick'); if(u) u.hidden=true;}
   updPreview(); $('#sheet').hidden=false;
   setTimeout(()=>(pre?$('#qty'):$('#q')).focus(),50);
 }
@@ -1345,6 +1405,14 @@ function saveLot(){
   const c=parseNum($('#cost').value);
   if(!(c>=0)){err.textContent='Inserisci il costo di entrata (0 è ammesso, ad esempio per un airdrop).'; return;}
   const unit=mode()==='unit'?c:c/qty;
+  if(editLot){
+    const hh=state.holdings[picked.id], l=hh&&hh.lots.find(x=>x.id===editLot);
+    if(!l){err.textContent='Acquisto non trovato.'; return;}
+    const old={qty:l.qty,unit:l.unit,date:l.date};
+    l.qty=qty; l.unit=unit; l.date=$('#date').value||null;
+    if(!save()){Object.assign(l,old); err.textContent='Salvataggio non riuscito: la memoria del browser non è disponibile.'; return;}
+    closeSheet(); lastChart=null; render(); return;
+  }
   let created=false, h=state.holdings[picked.id];
   if(!h){h=state.holdings[picked.id]={id:picked.id,name:picked.name,symbol:picked.symbol,thumb:picked.thumb,lots:[]}; created=true;}
   const lot={id:uid(),qty,unit,date:$('#date').value||null};
@@ -1359,7 +1427,50 @@ $('#add').onclick=()=>openSheet(null);
 $('#cancel').onclick=closeSheet;
 $('#saveLot').onclick=saveLot;
 $('#sheet').addEventListener('click',e=>{if(e.target.id==='sheet') closeSheet();});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#sheet').hidden) closeSheet();});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape') return; if(!$('#sheet').hidden) closeSheet(); if(!$('#sellSheet').hidden) closeSell();});
+
+/* ---------- vendite e uscite ---------- */
+let sellId=null;
+const sKind=()=>document.querySelector('input[name=sk]:checked').value;
+function openSell(id){
+  const s=stats(id); sellId=id;
+  $('#sellInfo').textContent=`Disponibili: ${qf(s.qty)} ${sym(s.h)}. Registra qui solo i token che escono davvero dal tuo possesso: spostarli dalla Tangem a Revolut X non cambia la quantità. Per il riacquisto usa "Aggiungi acquisto".`;
+  $('#sQty').value=''; $('#sPrice').value=ok(s.price)?String(+s.price.toPrecision(6)).replace('.',','):''; $('#sFee').value='';
+  $('#sDate').value=localDate(); $('#sErr').textContent='';
+  document.querySelector('input[name=sk][value=sell]').checked=true;
+  updSell(); $('#sellSheet').hidden=false; setTimeout(()=>$('#sQty').focus(),50);
+}
+function closeSell(){$('#sellSheet').hidden=true; sellId=null;}
+function updSell(){
+  const sell=sKind()==='sell'; $('#sPriceL').hidden=!sell; $('#sFeeL').hidden=!sell;
+  const pv=$('#sPrev'); if(!sellId||!state.holdings[sellId]){pv.textContent=''; return;}
+  const s=stats(sellId), q=parseNum($('#sQty').value);
+  if(!(q>0)){pv.textContent=''; return;}
+  let t=`Restano ${qf(Math.max(0,s.qty-q))} ${sym(s.h)}.`;
+  const p=parseNum($('#sPrice').value), fr=$('#sFee').value.trim(), f=fr?parseNum(fr):0;
+  if(sell&&p>0&&f>=0) t+=` Incasso netto ${eur(q*p-f)}; risultato rispetto al tuo prezzo medio ${eurS(q*p-f-q*s.avg)}.`;
+  pv.textContent=t;
+}
+['#sQty','#sPrice','#sFee'].forEach(x=>$(x).addEventListener('input',updSell));
+document.querySelectorAll('input[name=sk]').forEach(r=>r.addEventListener('change',updSell));
+$('#sMax').onclick=()=>{if(!sellId) return; $('#sQty').value=String(stats(sellId).qty).replace('.',','); updSell();};
+$('#sCancel').onclick=closeSell;
+$('#sellSheet').addEventListener('click',e=>{if(e.target.id==='sellSheet') closeSell();});
+$('#sSave').onclick=()=>{
+  const err=$('#sErr'), id=sellId, h=state.holdings[id]; if(!h) return;
+  const s=stats(id), sell=sKind()==='sell', q=parseNum($('#sQty').value);
+  if(!(q>0)){err.textContent='Inserisci una quantità maggiore di zero.'; return;}
+  if(q>s.qty*(1+1e-9)){err.textContent=`Quantità superiore a quella disponibile (${qf(s.qty)}).`; return;}
+  let price=0, fee=0;
+  if(sell){
+    price=parseNum($('#sPrice').value); if(!(price>0)){err.textContent='Inserisci il prezzo di vendita per unità.'; return;}
+    const fr=$('#sFee').value.trim(); fee=fr?parseNum(fr):0; if(!(fee>=0)){err.textContent='Commissione non valida.'; return;}
+  }
+  if(!Array.isArray(h.sales)) h.sales=[];
+  h.sales.push({id:uid(),kind:sell?'sell':'out',qty:Math.min(q,s.qty),price,fee,date:$('#sDate').value||null});
+  if(!save()){h.sales.pop(); err.textContent='Salvataggio non riuscito: la memoria del browser non è disponibile.'; return;}
+  closeSell(); lastChart=null; render();
+};
 
 /* ---------- backup ---------- */
 $('#exp').onclick=()=>{
