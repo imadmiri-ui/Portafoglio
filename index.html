@@ -876,13 +876,15 @@ async function getFng(){
   }catch(e){fng={t:Date.now()-3300000,err:e.message};}
   return fng;
 }
-/* Social: post Reddit delle ultime 24 ore (endpoint pubblico JSON, senza chiave). */
+/* Social: post pubblici Mastodon con l'hashtag del simbolo (es. #xrp), ultime 72 ore. */
 async function getSocial(id){
-  const h=state.holdings[id];
+  const h=state.holdings[id], tag=sym(h).toLowerCase().replace(/[^a-z0-9]/g,'');
+  if(tag.length<2) return {err:'simbolo non valido'};
   try{
-    const d=await getJSON(`https://www.reddit.com/search.json?q=${encodeURIComponent(tokTerms(h).join(' OR '))}&sort=new&t=day&limit=50&raw_json=1`);
-    const posts=((d&&d.data&&Array.isArray(d.data.children))?d.data.children:[]).map(c=>c&&c.data).filter(p=>p&&typeof p.title==='string');
-    return Object.assign({n:posts.length},toneOf(posts.map(p=>p.title)));
+    const d=await getJSON(`https://mastodon.social/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=40`);
+    const since=Date.now()-72*3600000;
+    const posts=(Array.isArray(d)?d:[]).filter(p=>p&&new Date(p.created_at).getTime()>=since).map(p=>textOf(p.content));
+    return Object.assign({n:posts.length,tag},toneOf(posts));
   }catch(e){return {err:e.message};}
 }
 async function getYT(id,force){
@@ -921,11 +923,11 @@ function confluence(id,a){
   rows.push(['Tecnica',a.trend==='up'?1:a.trend==='down'?-1:0,a.trend==='up'?'tendenza rialzista':a.trend==='down'?'tendenza ribassista':'laterale']);
   rows.push(['Momentum',a.rsi>=70?-1:a.rsi<=30?1:0,`RSI ${nfP.format(a.rsi)}`+(a.rsi>=70?', ipercomprato':a.rsi<=30?', ipervenduto':'')]);
   if(!S) rows.push(['Notizie',null,'in caricamento']);
-  else if(S.news.err) rows.push(['Notizie',null,'non disponibili']);
+  else if(S.news.err) rows.push(['Notizie',null,`non disponibili (${S.news.err})`]);
   else rows.push(['Notizie',dirOf(S.news),`${S.news.pos} positive e ${S.news.neg} negative su ${S.news.tot} titoli`]);
   if(!S) rows.push(['Social',null,'in caricamento']);
-  else if(S.social.err) rows.push(['Social',null,'non disponibile']);
-  else rows.push(['Social',S.social.tot?dirOf(S.social):0,`${S.social.n} post Reddit nelle ultime 24 ore, ${S.social.pos} positivi e ${S.social.neg} negativi`]);
+  else if(S.social.err) rows.push(['Social',null,`non disponibile (${S.social.err})`]);
+  else rows.push(['Social',S.social.tot?dirOf(S.social):0,`${S.social.n} post Mastodon #${S.social.tag} nelle ultime 72 ore, ${S.social.pos} positivi e ${S.social.neg} negativi`]);
   if(!settings.ytKey) rows.push(['YouTube',null,'aggiungi la chiave API in Consiglio, Impostazioni']);
   else if(!S) rows.push(['YouTube',null,'in caricamento']);
   else if(!S.yt||S.yt.err) rows.push(['YouTube',null,S.yt&&S.yt.err?S.yt.err:'non disponibile']);
@@ -946,7 +948,7 @@ function confHtml(id,a){
 function renderForecast(noKick){
   const box=$('#forecast'), ids=Object.keys(state.holdings);
   const head=`<section><h2>Previsioni</h2>
-    <p class="intro">Ogni token è valutato su più fonti: analisi tecnica degli ultimi 90 giorni, notizie da tutto il mondo, post Reddit, video YouTube (se inserisci la chiave) e clima di mercato. Le conferme dicono se le fonti vanno nella stessa direzione: non prevedono il futuro. Il tono di notizie e video è una stima automatica basata su parole chiave nei titoli.</p>
+    <p class="intro">Ogni token è valutato su più fonti: analisi tecnica degli ultimi 90 giorni, notizie da tutto il mondo, post Mastodon, video YouTube (se inserisci la chiave) e clima di mercato. Le conferme dicono se le fonti vanno nella stessa direzione: non prevedono il futuro. Il tono di notizie e video è una stima automatica basata su parole chiave nei titoli.</p>
     <div class="bar"><span class="m small">${taBusy||sigBusy?'Analisi in corso…':'Tecnica ogni 6 ore, fonti ogni 30 minuti'}</span><button class="link" id="fcRefresh" type="button">Ricalcola</button></div>`;
   if(!ids.length){box.innerHTML=head+'<p class="empty">Aggiungi almeno un token nel portafoglio per vedere le previsioni.</p></section>'; bindFc(); return;}
   const cards=ids.map(id=>{
@@ -990,7 +992,6 @@ function bindFc(){
   document.querySelectorAll('#forecast [data-open]').forEach(b=>b.onclick=()=>go('detail',b.dataset.open));
 }
 
-/* ---------- notizie (fonte: cryptocurrency.cv, servizio esterno gratuito) ---------- */
 /* Notizie: GDELT DOC 2.0 (gratuito, senza chiave, CORS aperto). Il servizio chiede
    al massimo una richiesta ogni 5 secondi: le richieste vengono messe in fila. */
 const GD='https://api.gdeltproject.org/api/v2/doc/doc';
@@ -1012,7 +1013,7 @@ function tokTerms(h){
 const gdDate=s=>{const m=/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(String(s||'')); return m?`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`:'';};
 let gdChain=Promise.resolve(), gdLast=0;
 async function gdRun(query){
-  const wait=gdLast+5500-Date.now(); if(wait>0) await new Promise(r=>setTimeout(r,wait));
+  const wait=gdLast+8000-Date.now(); if(wait>0) await new Promise(r=>setTimeout(r,wait));
   gdLast=Date.now();
   const ctl=new AbortController(), to=setTimeout(()=>ctl.abort(),20000);
   try{
@@ -1026,7 +1027,26 @@ async function gdRun(query){
   }catch(e){ if(e.name==='AbortError') throw new Error('timeout'); throw e; }
   finally{clearTimeout(to);}
 }
-function gdelt(query){const p=gdChain.then(()=>gdRun(query)); gdChain=p.catch(()=>{}); return p;}
+const GD_TTL=30*60*1000;
+function gdelt(query){
+  const lk=KEY+'-gd-'+query;
+  try{const o=JSON.parse(localStorage.getItem(lk)||'null'); if(o&&Array.isArray(o.items)&&Date.now()-o.t<GD_TTL) return Promise.resolve(o.items);}catch(e){}
+  const p=gdChain.then(async()=>{
+    let items;
+    try{items=await gdRun(query);}
+    catch(e){
+      if(!(e instanceof TypeError)) throw e;
+      gdLast=Date.now()+4000; /* risposta illeggibile dal browser: attesa più lunga e un solo nuovo tentativo */
+      try{items=await gdRun(query);}catch(e2){throw new Error(e2 instanceof TypeError?'GDELT non risponde, probabile limite di richieste':e2.message);}
+    }
+    try{localStorage.setItem(lk,JSON.stringify({t:Date.now(),items}));}catch(e){}
+    return items;
+  });
+  gdChain=p.catch(()=>{});
+  return p;
+}
+/* Contesto crypto obbligatorio: evita omonimi (es. Hedera è anche l'edera). */
+const CRYPTO_CTX='(crypto OR cryptocurrency OR blockchain OR token OR price)';
 /* chiavi: 'mine' = notizie dei tuoi token unite, 'market' = mercato crypto, altrimenti id del token */
 async function fetchNewsKey(key){
   const c=news.cache[key]; if(c&&Date.now()-c.t<NEWS_TTL) return c;
@@ -1046,7 +1066,7 @@ async function fetchNewsKey(key){
     }else{
       const h=state.holdings[key], terms=h?tokTerms(h):[];
       if(!terms.length) throw new Error('nome del token troppo corto per la ricerca');
-      items=await gdelt(terms.length>1?`(${terms.join(' OR ')})`:terms[0]);
+      items=await gdelt((terms.length>1?`(${terms.join(' OR ')})`:terms[0])+' '+CRYPTO_CTX);
     }
     news.cache[key]={t:Date.now(),items};
   }catch(e){
