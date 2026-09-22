@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="it"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Diagnostica Revolut X</title>
+<style>
+:root{--bg:#0E1826;--fg:#E4ECF4;--muted:#8497AB;--line:#223449;--up:#3DC48E;--down:#F0707A}
+body{margin:0;padding:18px calc(18px + env(safe-area-inset-left,0px));background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,sans-serif;padding-top:calc(18px + env(safe-area-inset-top,0px))}
+h1{font-size:19px;margin:0 0 8px}
+p{color:var(--muted);font-size:13.5px}
+button{width:100%;padding:13px;border:1px solid var(--line);border-radius:10px;background:none;color:var(--fg);font:inherit;margin-top:10px}
+ul{list-style:none;padding:0;margin:14px 0 0}
+li{padding:11px 0;border-bottom:1px solid var(--line);font-size:14px}
+.lv{font-weight:600}.up{color:var(--up)}.down{color:var(--down)}.m{color:var(--muted)}
+</style></head><body>
+<h1>Diagnostica Revolut X</h1>
+<p>Verifica se questo browser può usare le API di Revolut X. Non usa chiavi, non legge il conto e non invia ordini.</p>
+<button id="run" type="button">Esegui i test</button>
+<ul id="out"></ul>
+<script>
+(function(){
+'use strict';
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const RVX='https://revx.revolut.com/api';
+async function diag(){
+  const out=$('#out'), rows=[];
+  const draw=()=>{out.innerHTML=rows.map(([t,s,d])=>`<li><span class="lv ${s==='ok'?'up':s==='ko'?'down':'m'}">${s==='ok'?'\u2713':s==='ko'?'\u2717':'\u2026'} ${esc(t)}</span><br>${esc(d)}</li>`).join('');};
+  rows.push(['1. Lettura dati pubblici','wait','test in corso...']); draw();
+  let srvMs=null;
+  try{
+    const r=await fetch(`${RVX}/2.0/public/order-book/XRP-EUR?limit=5`);
+    const dh=r.headers.get('date'); if(dh) srvMs=new Date(dh).getTime();
+    if(!r.ok) rows[0]=['1. Lettura dati pubblici','ko','il server risponde HTTP '+r.status];
+    else{const j=await r.json(); const b=j&&j.data&&Array.isArray(j.data.bids)?j.data.bids.length:0;
+      rows[0]=['1. Lettura dati pubblici','ok','order book XRP-EUR letto, '+b+' livelli in acquisto'];}
+  }catch(e){rows[0]=['1. Lettura dati pubblici','ko',(e instanceof TypeError?'bloccata dal browser (CORS): le API non autorizzano le pagine web':'errore: '+e.message)];}
+  draw();
+  rows.push(['2. Invio intestazioni firmate','wait','test in corso...']); draw();
+  try{
+    const r=await fetch(`${RVX}/2.0/public/order-book/XRP-EUR?limit=1`,{headers:{'X-Revx-Timestamp':String(Date.now()),'X-Revx-Api-Key':'diagnostica'}});
+    rows[1]=['2. Invio intestazioni firmate','ok','il browser può inviare le intestazioni X-Revx (risposta HTTP '+r.status+')'];
+  }catch(e){rows[1]=['2. Invio intestazioni firmate','ko',(e instanceof TypeError?'bloccato: il server non autorizza le intestazioni X-Revx dalle pagine web, quindi nessuna chiamata autenticata è possibile da qui':'errore: '+e.message)];}
+  draw();
+  rows.push(['3. Firma Ed25519 nel browser','wait','test in corso...']); draw();
+  try{
+    const k=await crypto.subtle.generateKey({name:'Ed25519'},true,['sign','verify']);
+    const sig=await crypto.subtle.sign({name:'Ed25519'},k.privateKey,new TextEncoder().encode('test'));
+    rows[2]=['3. Firma Ed25519 nel browser','ok','supportata, firma di '+sig.byteLength+' byte'];
+  }catch(e){rows[2]=['3. Firma Ed25519 nel browser','ko','non supportata da questo browser ('+e.message+')'];}
+  draw();
+  rows.push(['4. Orologio del dispositivo','wait','test in corso...']); draw();
+  if(srvMs==null||!isFinite(srvMs)) rows[3]=['4. Orologio del dispositivo','wait','non verificabile: il server non espone la sua ora al browser'];
+  else{
+    const d=Math.round((Date.now()-srvMs)/1000), a=Math.abs(d);
+    rows[3]=['4. Orologio del dispositivo',a<=60?'ok':'ko',
+      a<=60?('allineato entro '+a+' secondi rispetto al server')
+           :((d>0?'avanti':'indietro')+' di '+a+' secondi rispetto al server: le richieste firmate verrebbero rifiutate')];
+  }
+  rows.push(['Informazioni locali','m','Fuso del browser: '+(Intl.DateTimeFormat().resolvedOptions().timeZone||'sconosciuto')+'. Ora del browser: '+new Date().toLocaleTimeString('it-IT')+'.']);
+  draw();
+}
+const b=$('#run');
+b.onclick=()=>{b.disabled=true; diag().finally(()=>{b.disabled=false;});};
+})();
+</script></body></html>
