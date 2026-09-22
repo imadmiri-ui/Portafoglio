@@ -307,11 +307,18 @@ const qf=v=>!ok(v)?'—':nfQ.format(v);
 const cls=v=>!ok(v)?'':v>0?'up':v<0?'down':'';
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const safeImg=u=>(typeof u==='string'&&/^https:\/\//.test(u))?u:'';
-const clock=t=>new Date(t).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-const dIt=s=>{if(!s)return 'senza data';const d=new Date(s);return isNaN(d)?'senza data':d.toLocaleDateString('it-IT',{day:'2-digit',month:'2-digit',year:'numeric'});};
+/* Fuso orario: "automatico" usa quello del browser, che può essere sbagliato se il paese
+   ha cambiato orario di recente e il browser non ha ancora aggiornato i suoi dati.
+   Con uno scostamento fisso l'app calcola l'ora da sé, in modo indipendente dal browser. */
+let tzOff=null; /* minuti rispetto a UTC; null = automatico */
+const offMin=ms=>tzOff==null?-new Date(ms).getTimezoneOffset():tzOff;
+const shifted=ms=>new Date(ms+offMin(ms)*60000);
+const UTCF=o=>Object.assign({timeZone:'UTC'},o);
+const clock=t=>shifted(t).toLocaleTimeString('it-IT',UTCF({hour:'2-digit',minute:'2-digit',second:'2-digit'}));
+const dIt=s=>{if(!s)return 'senza data';const d=new Date(s);return isNaN(d)?'senza data':d.toLocaleDateString('it-IT',UTCF({day:'2-digit',month:'2-digit',year:'numeric'}));};
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const pad=n=>String(n).padStart(2,'0');
-const localDate=()=>{const d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());};
+const localDate=()=>{const d=shifted(Date.now());return d.getUTCFullYear()+'-'+pad(d.getUTCMonth()+1)+'-'+pad(d.getUTCDate());};
 const sym=h=>String(h.symbol||'').toUpperCase();
 
 /* Accetta "0,5", "0.5", "1.234,56". Con solo il punto, il punto è il separatore decimale. */
@@ -570,7 +577,7 @@ function renderDetail(){
         <button class="del" type="button" data-sale="${esc(x.id)}">Elimina</button></li>`).join('')}
     </ul></section>`:''}
     <button class="danger" id="rm" type="button">Rimuovi ${esc(h.name)} dal portafoglio</button>
-    <p class="m small" style="margin-bottom:36px">${s.m?`Dato di mercato CoinGecko del ${esc(m.last_updated?new Date(m.last_updated).toLocaleString('it-IT'):'n/d')}. Il valore di posizione usa solo gli acquisti inseriti, non legge il wallet Tangem.`:'Prezzo non disponibile per questo token su CoinGecko.'}</p>`;
+    <p class="m small" style="margin-bottom:36px">${s.m?`Dato di mercato CoinGecko del ${esc(m.last_updated?shifted(new Date(m.last_updated).getTime()).toLocaleString('it-IT',UTCF()):'n/d')}. Il valore di posizione usa solo gli acquisti inseriti, non legge il wallet Tangem.`:'Prezzo non disponibile per questo token su CoinGecko.'}</p>`;
   document.querySelectorAll('#dInfo [data-lot]').forEach(b=>b.onclick=()=>delLot(id,b.dataset.lot));
   document.querySelectorAll('#dInfo [data-sale]').forEach(b=>b.onclick=()=>delSale(id,b.dataset.sale));
   document.querySelectorAll('#dInfo [data-edit]').forEach(b=>b.onclick=()=>{const l=h.lots.find(x=>x.id===b.dataset.edit); if(l) openSheet({id:h.id,name:h.name,symbol:h.symbol,thumb:h.thumb},l);});
@@ -693,7 +700,7 @@ function drawCandles(){
   const padv=(max-min)*0.06; min-=padv; max+=padv;
   const n=cs.length, cw=(W-pl-pr)/n, bw=Math.max(1,cw*0.7);
   const Y=v=>pt+(1-(v-min)/(max-min))*(H-pt-pb);
-  const fT=t=>days==='c1h'?new Date(t).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):new Date(t).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+  const fT=t=>days==='c1h'?shifted(t).toLocaleString('it-IT',UTCF({day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})):shifted(t).toLocaleTimeString('it-IT',UTCF({hour:'2-digit',minute:'2-digit'}));
   let body='';
   cs.forEach((c,i)=>{
     const x=pl+cw*i+cw/2, col=c.c>=c.o?'var(--up)':'var(--down)';
@@ -742,8 +749,8 @@ function drawLine(){
   const area=d+`L${X(t1).toFixed(1)} ${H-pb}L${X(t0).toFixed(1)} ${H-pb}Z`;
   const first=pts[0][1], last=pts[pts.length-1][1];
   const col=last>=first?'var(--up)':'var(--down)';
-  const fT=t=>days==='1'?new Date(t).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}):new Date(t).toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:days==='365'?'2-digit':undefined});
-  const fFull=t=>new Date(t).toLocaleString('it-IT',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+  const fT=t=>days==='1'?shifted(t).toLocaleTimeString('it-IT',UTCF({hour:'2-digit',minute:'2-digit'})):shifted(t).toLocaleDateString('it-IT',UTCF({day:'2-digit',month:'short',year:days==='365'?'2-digit':undefined}));
+  const fFull=t=>shifted(t).toLocaleString('it-IT',UTCF({day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}));
   let avgSvg='';
   if(showAvg){
     const y=Y(avg).toFixed(1);
@@ -821,7 +828,7 @@ document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement
 function destroyChart(){ if(lw){ try{lw.chart.remove();}catch(e){} lw=null; } }
 const cssv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 function hexA(c,a){const m=/^#([0-9a-f]{6})$/i.exec(c); if(!m) return c; const n=parseInt(m[1],16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;}
-const toLocalSec=ms=>Math.floor(ms/1000)-new Date(ms).getTimezoneOffset()*60;
+const toLocalSec=ms=>Math.floor(ms/1000)+offMin(ms)*60;
 const decFor=p=>p>=1000?2:p>=1?4:p>=0.01?5:8;
 function fmtChart(v){ if(!ok(v)) return ''; const a=Math.abs(v); return (a>=1?v.toLocaleString('it-IT',{maximumFractionDigits:a>=1000?2:4}):v.toLocaleString('it-IT',{maximumSignificantDigits:4}))+' €'; }
 function emaSeries(rows,k){
@@ -1255,11 +1262,12 @@ function renderNews(noKick){
 }
 
 /* ---------- impostazioni costi e fonti ---------- */
-let settings={fee:null,budget:null,ytKey:'',tok:{}};
+let settings={fee:null,budget:null,ytKey:'',tok:{},tzOff:null};
 let setOpen=null;
 function loadSettings(){
   try{const o=JSON.parse(localStorage.getItem(KEY+'-settings')||'null'); if(o&&typeof o==='object') settings=Object.assign(settings,o);}catch(e){}
   if(!settings.tok||typeof settings.tok!=='object') settings.tok={};
+  tzOff=ok(settings.tzOff)?settings.tzOff:null;
 }
 function saveSettings(){try{localStorage.setItem(KEY+'-settings',JSON.stringify(settings));}catch(e){}}
 function settingsMissing(){
@@ -1276,11 +1284,22 @@ function settingsHtml(){
       <label>Costo di invio dalla Tangem a Revolut X (in ${s})<input class="inp" data-tok="${esc(id)}" data-k="dep" inputmode="decimal" autocomplete="off" value="${num(T.dep)}"></label>
       <label>Commissione di prelievo da Revolut X alla Tangem (in ${s})<input class="inp" data-tok="${esc(id)}" data-k="wd" inputmode="decimal" autocomplete="off" value="${num(T.wd)}"></label></div>`;}).join('')}
     <label>Budget mensile per nuovi acquisti (€, facoltativo)<input class="inp" data-set="budget" inputmode="decimal" autocomplete="off" value="${num(settings.budget)}"></label>
+    <label>Fuso orario dell’ora e dei grafici
+      <select class="inp" id="tzSel">${[['','Automatico (browser)'],['0','GMT, UTC+0'],['60','UTC+1'],['120','UTC+2'],['-60','UTC-1']].map(([v,l])=>`<option value="${v}"${String(tzOff==null?'':tzOff)===v?' selected':''}>${l}</option>`).join('')}</select>
+    </label>
+    <p class="m small">Il browser dichiara ${esc((Intl.DateTimeFormat().resolvedOptions().timeZone)||'fuso sconosciuto')} e segna le ${esc(new Date().toLocaleTimeString('it-IT'))}. Se non coincide con l’orologio del telefono, scegli qui lo scostamento giusto: l’app calcolerà l’ora da sé.</p>
     <label>Chiave API YouTube (facoltativa)<input class="inp" data-set="ytKey" type="password" autocomplete="off" value="${esc(settings.ytKey||'')}"></label>
     <p class="m small">La chiave YouTube (YouTube Data API v3) si crea gratis da Google Cloud Console. Resta solo su questo telefono e non entra nei backup.</p>
   </details>`;
 }
 function bindSettings(){
+  const ts=$('#tzSel');
+  if(ts) ts.onchange=()=>{
+    tzOff=ts.value===''?null:parseInt(ts.value,10);
+    settings.tzOff=tzOff; saveSettings();
+    Object.keys(chartCache).forEach(k=>delete chartCache[k]);
+    destroyChart(); lastChart=null; render();
+  };
   const d=$('#setBox'); if(!d) return;
   d.addEventListener('toggle',()=>{setOpen=d.open;});
   d.querySelectorAll('input').forEach(inp=>inp.addEventListener('change',()=>{
@@ -1352,7 +1371,7 @@ function accPlan(id){
 }
 function renderTips(noKick){
   const box=$('#tips'), t=totals(), ids=Object.keys(state.holdings);
-  const now=new Date(), dayN=Math.floor((now.getTime()-now.getTimezoneOffset()*60000)/86400000);
+  const dayN=Math.floor((Date.now()+offMin(Date.now())*60000)/86400000);
   const tip=TIPS[dayN%TIPS.length];
   const plans=ids.map(id=>{
     const P=accPlan(id);
@@ -1566,7 +1585,7 @@ $('#sSave').onclick=()=>{
 
 /* ---------- backup ---------- */
 $('#exp').onclick=()=>{
-  const data=JSON.stringify({version:1,currency:'EUR',exportedAt:new Date().toISOString(),holdings:state.holdings,settings:{fee:settings.fee,budget:settings.budget,tok:settings.tok}},null,2);
+  const data=JSON.stringify({version:1,currency:'EUR',exportedAt:new Date().toISOString(),holdings:state.holdings,settings:{fee:settings.fee,budget:settings.budget,tok:settings.tok,tzOff:settings.tzOff}},null,2);
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));
   a.download='portafoglio-tangem-'+localDate()+'.json';
@@ -1583,7 +1602,7 @@ $('#impFile').onchange=e=>{
     if(!valid(s)){alert('File non valido: non è un backup di questa app.'); return;}
     if(!confirm('Sostituire il portafoglio attuale con il backup selezionato?')) return;
     state={version:1,holdings:s.holdings}; save();
-    if(s.settings&&typeof s.settings==='object'){settings.fee=ok(s.settings.fee)?s.settings.fee:null; settings.budget=ok(s.settings.budget)?s.settings.budget:null; settings.tok=s.settings.tok&&typeof s.settings.tok==='object'?s.settings.tok:{}; saveSettings();}
+    if(s.settings&&typeof s.settings==='object'){settings.fee=ok(s.settings.fee)?s.settings.fee:null; settings.budget=ok(s.settings.budget)?s.settings.budget:null; settings.tok=s.settings.tok&&typeof s.settings.tok==='object'?s.settings.tok:{}; settings.tzOff=ok(s.settings.tzOff)?s.settings.tzOff:null; tzOff=settings.tzOff; saveSettings();}
     market={}; lastOk=0; location.replace('#/'); render(); refreshMarket();
   };
   r.onerror=()=>{e.target.value=''; alert('Lettura del file non riuscita.');};
