@@ -154,6 +154,18 @@ details.set label{display:block;margin-top:12px;font-size:14px}
 .setTok{margin-top:14px;padding-top:10px;border-top:1px solid var(--line)}
 .attr{font-size:11.5px;color:var(--muted);margin:4px 0 0}
 .attr a{color:var(--muted)}
+/* Grafico a schermo intero */
+.fsbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px}
+.cw.fs{position:fixed;inset:0;z-index:30;background:var(--bg);display:flex;flex-direction:column;
+  padding:calc(env(safe-area-inset-top,0px) + 4px) calc(env(safe-area-inset-right,0px) + 10px) calc(env(safe-area-inset-bottom,0px) + 4px) calc(env(safe-area-inset-left,0px) + 10px)}
+.cw.fs .fsbar{margin-top:0}
+.cw.fs .ranges{margin-top:2px;flex-wrap:nowrap;overflow-x:auto}
+.cw.fs .ranges button{padding:4px 10px;font-size:13px;white-space:nowrap}
+.cw.fs .tip{max-height:2.9em;overflow:auto;margin-top:4px;font-size:12px}
+.cw.fs .chart{flex:1;height:auto;min-height:0}
+.fsbal{display:none}
+.cw.fs .fsbal{display:flex;gap:4px 14px;align-items:baseline;flex-wrap:wrap;font-size:13px;padding-bottom:2px;border-bottom:1px solid var(--line)}
+.cw.fs .fsbal .tot{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;font-weight:600;font-size:19px}
 </style>
 </head>
 <body>
@@ -429,6 +441,17 @@ function renderTop(){
   if(!storageOk){p.hidden=false; p.textContent='Memoria del browser non disponibile: le modifiche non vengono salvate';}
   else if(t.missing){p.hidden=false; p.textContent=`Saldo parziale: ${t.missing} token senza prezzo`;}
   else p.hidden=true;
+  updFsBal();
+}
+/* Saldo compatto visibile anche con il grafico a schermo intero */
+function updFsBal(){
+  const el=$('#fsBal'); if(!el) return;
+  const t=totals(), s=view.screen==='detail'&&state.holdings[view.id]?stats(view.id):null;
+  el.innerHTML=`<span class="tot">${eur(t.value)}</span>`
+    +(t.n&&t.value>0?`<span class="${cls(t.pnl)}">${eurS(t.pnl)} (${pct(t.pnlPct)})</span>`:'')
+    +(ok(t.ch24)?`<span class="${cls(t.ch24)}">${eurS(t.ch24)} 24h</span>`:'')
+    +(s?`<span>${esc(sym(s.h))} ${eur(s.price)} <span class="${cls(s.ch24)}">${pct(s.ch24)}</span></span>`:'')
+    +(lastOk?`<span class="m small">agg. ${clock(lastOk)}</span>`:'');
 }
 function renderHome(){
   const ids=Object.keys(state.holdings);
@@ -484,22 +507,26 @@ function renderDetail(){
     el.innerHTML=`<button class="link" id="back" type="button">‹ Portafoglio</button>
     <div class="dh">${img?`<img src="${esc(img)}" alt="">`:''}<div><h1>${esc(h.name)}</h1><div class="s" id="dSub"></div></div></div>
     <div class="price" id="dPrice"></div>
-    <div class="ranges" role="group" aria-label="Periodo del grafico">${RANGES.map(([d,l])=>`<button type="button" data-days="${d}">${l}</button>`).join('')}</div>
-    <div class="tip" id="tip"></div>
-    <div class="chart" id="chart"></div>
+    <div id="cw" class="cw">
+      <div class="fsbal" id="fsBal" aria-live="polite"></div>
+      <div class="fsbar"><button class="link" id="fsBtn" type="button"></button><button class="link" id="srT" type="button"></button></div>
+      <div class="ranges" role="group" aria-label="Periodo del grafico">${RANGES.map(([d,l])=>`<button type="button" data-days="${d}">${l}</button>`).join('')}</div>
+      <div class="tip" id="tip"></div>
+      <div class="chart" id="chart"></div>
+    </div>
     <p class="attr">Due dita per ingrandire, trascina per scorrere, tieni premuto per leggere i valori. Linee tratteggiate: S supporti (verdi), R resistenze (rosse). Grafici: <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView Lightweight Charts™</a>.</p>
-    <button class="link" id="srT" type="button"></button>
     <div id="dInfo"></div>`;
     $('#back').onclick=goBack;
     const srB=$('#srT'), srLab=()=>{srB.textContent=srOn?'Nascondi supporti e resistenze':'Mostra supporti e resistenze';};
-    srLab();
+    srLab(); fsLabel();
+    $('#fsBtn').onclick=()=>{isFS()?exitFS():enterFS();};
     srB.onclick=()=>{srOn=!srOn; try{localStorage.setItem(KEY+'-sr',srOn?'1':'0');}catch(e){} srLab(); destroyChart(); lastChart=null; $('#chart').innerHTML=''; loadAndDraw();};
     el.querySelectorAll('.ranges button').forEach(b=>b.onclick=()=>{
       if(view.days===b.dataset.days) return;
       view.days=b.dataset.days; destroyChart(); lastChart=null; $('#chart').innerHTML=''; updRanges(); loadAndDraw();
     });
   }
-  updRanges();
+  updRanges(); updFsBal();
   $('#dSub').innerHTML=`${esc(sym(h))}${m.market_cap_rank?`, rank #${esc(m.market_cap_rank)}`:''}`;
   $('#dPrice').innerHTML=`<span class="big">${eur(s.price)}</span><span class="${cls(s.ch24)}">${pct(s.ch24)} in 24h</span>`;
   const lots=h.lots.slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
@@ -771,6 +798,26 @@ function loadLWC(){
   });
   return lwcP;
 }
+/* Schermo intero: API Fullscreen + blocco orizzontale se il sistema lo consente;
+   in ogni caso la classe .fs porta il grafico a tutto schermo. */
+const isFS=()=>{const w=$('#cw'); return !!(w&&w.classList.contains('fs'));};
+function fsLabel(){const b=$('#fsBtn'); if(b) b.textContent=isFS()?'✕ Esci da schermo intero':'⤢ Schermo intero';}
+function fitChart(){const b=$('#chart'); if(!b) return; if(lw) lw.chart.applyOptions({width:b.clientWidth,height:b.clientHeight}); else if(lastChart) drawChart();}
+async function enterFS(){
+  const w=$('#cw'); if(!w) return;
+  w.classList.add('fs'); document.body.style.overflow='hidden'; fsLabel();
+  try{if(w.requestFullscreen) await w.requestFullscreen({navigationUI:'hide'});}catch(e){}
+  try{if(screen.orientation&&screen.orientation.lock) await screen.orientation.lock('landscape');}catch(e){}
+  setTimeout(fitChart,200);
+}
+async function exitFS(){
+  const w=$('#cw'); if(w) w.classList.remove('fs');
+  document.body.style.overflow=''; fsLabel();
+  try{if(screen.orientation&&screen.orientation.unlock) screen.orientation.unlock();}catch(e){}
+  try{if(document.fullscreenElement&&document.exitFullscreen) await document.exitFullscreen();}catch(e){}
+  setTimeout(fitChart,200);
+}
+document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement&&isFS()) exitFS();});
 function destroyChart(){ if(lw){ try{lw.chart.remove();}catch(e){} lw=null; } }
 const cssv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 function hexA(c,a){const m=/^#([0-9a-f]{6})$/i.exec(c); if(!m) return c; const n=parseInt(m[1],16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;}
@@ -1366,6 +1413,7 @@ function parseRoute(){
 }
 function applyRoute(){
   const r=parseRoute();
+  if(isFS()) exitFS();
   if(r.screen==='detail'&&!state.holdings[r.id]){location.replace('#/'); return;}
   prevScreen=view.routed?view.screen:null;
   view.routed=true; view.screen=r.screen; view.id=r.id||null; lastChart=null;
@@ -1544,7 +1592,7 @@ $('#impFile').onchange=e=>{
 
 /* ---------- avvio ---------- */
 $('#refresh').onclick=()=>refreshMarket();
-let rsT; window.addEventListener('resize',()=>{clearTimeout(rsT); rsT=setTimeout(()=>{const b=$('#chart'); if(lw&&b) lw.chart.applyOptions({width:b.clientWidth}); else if(lastChart) drawChart();},150);});
+let rsT; window.addEventListener('resize',()=>{clearTimeout(rsT); rsT=setTimeout(fitChart,150);});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()-lastOk>REFRESH_MS/2) refreshMarket();});
 setInterval(()=>{if(!document.hidden) refreshMarket();},REFRESH_MS);
 
