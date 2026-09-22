@@ -487,9 +487,13 @@ function renderDetail(){
     <div class="ranges" role="group" aria-label="Periodo del grafico">${RANGES.map(([d,l])=>`<button type="button" data-days="${d}">${l}</button>`).join('')}</div>
     <div class="tip" id="tip"></div>
     <div class="chart" id="chart"></div>
-    <p class="attr">Due dita per ingrandire, trascina per scorrere, tieni premuto per leggere i valori. Grafici: <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView Lightweight Charts™</a>.</p>
+    <p class="attr">Due dita per ingrandire, trascina per scorrere, tieni premuto per leggere i valori. Linee tratteggiate: S supporti (verdi), R resistenze (rosse). Grafici: <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView Lightweight Charts™</a>.</p>
+    <button class="link" id="srT" type="button"></button>
     <div id="dInfo"></div>`;
     $('#back').onclick=goBack;
+    const srB=$('#srT'), srLab=()=>{srB.textContent=srOn?'Nascondi supporti e resistenze':'Mostra supporti e resistenze';};
+    srLab();
+    srB.onclick=()=>{srOn=!srOn; try{localStorage.setItem(KEY+'-sr',srOn?'1':'0');}catch(e){} srLab(); destroyChart(); lastChart=null; $('#chart').innerHTML=''; loadAndDraw();};
     el.querySelectorAll('.ranges button').forEach(b=>b.onclick=()=>{
       if(view.days===b.dataset.days) return;
       view.days=b.dataset.days; destroyChart(); lastChart=null; $('#chart').innerHTML=''; updRanges(); loadAndDraw();
@@ -781,6 +785,44 @@ function emaSeries(rows,k){
   return out;
 }
 const tLabel=(sec,withDate)=>new Date(sec*1000).toLocaleString('it-IT',Object.assign({timeZone:'UTC',hour:'2-digit',minute:'2-digit'},withDate?{day:'2-digit',month:'2-digit'}:{}));
+/* ---------- supporti e resistenze ----------
+   Minimi e massimi locali (k barre per lato) raggruppati se distano meno di 0,6 × range medio.
+   Per lato: i 2 livelli più vicini al prezzo, preferendo quelli toccati almeno 2 volte. */
+function srLevels(bars,last){
+  const n=bars.length; if(n<30||!(last>0)) return {sup:[],res:[],tol:0};
+  const k=n>=200?5:3, piv=[];
+  for(let i=k;i<n-k;i++){
+    let hi=true, lo=true;
+    for(let j=i-k;j<=i+k;j++){ if(j===i) continue; if(bars[j].h>bars[i].h) hi=false; if(bars[j].l<bars[i].l) lo=false; }
+    if(hi) piv.push({p:bars[i].h,i}); if(lo) piv.push({p:bars[i].l,i});
+  }
+  let tr=0; for(let i=1;i<n;i++) tr+=Math.max(bars[i].h-bars[i].l,Math.abs(bars[i].h-bars[i-1].c),Math.abs(bars[i].l-bars[i-1].c));
+  const tol=Math.max(tr/(n-1)*0.6,last*0.002);
+  piv.sort((a,b)=>a.p-b.p);
+  const cl=[];
+  for(const x of piv){const c=cl[cl.length-1]; if(c&&x.p-c.hi<=tol){c.sum+=x.p; c.n++; c.hi=x.p;} else cl.push({sum:x.p,n:1,hi:x.p});}
+  const lv=cl.map(c=>({p:c.sum/c.n,n:c.n}));
+  const pick=(arr)=>{const strong=arr.filter(v=>v.n>=2); return (strong.length>=2?strong:arr).slice(0,2);};
+  return {tol,
+    sup:pick(lv.filter(v=>v.p<last-tol*0.5).sort((a,b)=>b.p-a.p)),
+    res:pick(lv.filter(v=>v.p>last+tol*0.5).sort((a,b)=>a.p-b.p))};
+}
+let srOn=true; try{srOn=localStorage.getItem(KEY+'-sr')!=='0';}catch(e){}
+function applySR(o,bars){
+  (o.srLines||[]).forEach(l=>{try{o.main.removePriceLine(l);}catch(e){}});
+  o.srLines=[]; o.sr=null;
+  if(!srOn||!bars.length) return;
+  const last=bars[bars.length-1].c, S=srLevels(bars,last); o.sr=S;
+  const up=cssv('--up'), dn=cssv('--down');
+  S.sup.forEach((v,i)=>o.srLines.push(o.main.createPriceLine({price:v.p,color:up,lineWidth:1,lineStyle:3,axisLabelVisible:true,title:'S'+(i+1)})));
+  S.res.forEach((v,i)=>o.srLines.push(o.main.createPriceLine({price:v.p,color:dn,lineWidth:1,lineStyle:3,axisLabelVisible:true,title:'R'+(i+1)})));
+}
+function srText(o){
+  if(!srOn) return '';
+  const S=o.sr; if(!S||(!S.sup.length&&!S.res.length)) return ' Supporti e resistenze: dati insufficienti in questo periodo.';
+  const f=(v,i,p)=>`${p}${i+1} ${esc(eur(v.p))} (${v.n} ${v.n===1?'tocco':'tocchi'})`;
+  return ` <br>Supporti: ${S.sup.length?S.sup.map((v,i)=>f(v,i,'S')).join(', '):'nessuno sotto il prezzo'}. Resistenze: ${S.res.length?S.res.map((v,i)=>f(v,i,'R')).join(', '):'nessuna sopra il prezzo'}. Livelli stimati dai minimi e massimi del periodo visualizzato: zone indicative, non garanzie.`;
+}
 function drawLW(L,id,days,data,avg){
   const box=$('#chart'); if(!box) return;
   const first=!lw||lw.id!==id||lw.days!==days;
@@ -820,11 +862,13 @@ function drawLW(L,id,days,data,avg){
       vols.push({time:t,value:ok(c.v)?c.v:0,color:hexA(c.c>=c.o?up:dn,0.35)});});
     o.main.setData(rows); o.vol.setData(vols); o.e20.setData(emaSeries(rows,20)); o.e50.setData(emaSeries(rows,50));
     o.rows=rows;
+    applySR(o,rows.map(r=>({h:r.high,l:r.low,c:r.close})));
     if(first&&rows.length) o.chart.timeScale().setVisibleLogicalRange({from:Math.max(0,rows.length-90),to:rows.length+2});
   }else{
     const rows=[]; let lastT=-Infinity;
     data.pts.forEach(p=>{const t=toLocalSec(p[0]); if(t<=lastT) return; lastT=t; rows.push({time:t,value:p[1]});});
     o.main.setData(rows); o.rows=rows;
+    applySR(o,rows.map(r=>({h:r.value,l:r.value,c:r.value})));
     if(first) o.chart.timeScale().fitContent();
   }
   if(o.avgLine){try{o.main.removePriceLine(o.avgLine);}catch(e){} o.avgLine=null;}
@@ -834,9 +878,9 @@ function drawLW(L,id,days,data,avg){
 }
 function baseTipLW(o){
   const r=o.rows||[]; if(!r.length) return 'Nessun dato per questo periodo.';
-  if(o.kind==='c'){const last=r[r.length-1]; return `Candele da ${CANDLE[o.days][2]}, coppia Binance ${esc(o.pair)}${o.conv!==1?' convertita in euro al cambio attuale':''}. Ultima chiusura ${esc(eur(last.close))}. Linea blu: media EMA 20; gialla: EMA 50; barre in basso: volume.`;}
+  if(o.kind==='c'){const last=r[r.length-1]; return `Candele da ${CANDLE[o.days][2]}, coppia Binance ${esc(o.pair)}${o.conv!==1?' convertita in euro al cambio attuale':''}. Ultima chiusura ${esc(eur(last.close))}. Linea blu: media EMA 20; gialla: EMA 50; barre in basso: volume.`+srText(o);}
   const a=r[0].value, b=r[r.length-1].value;
-  return `Nel periodo <span class="${cls(b-a)}">${pct((b/a-1)*100)}</span>. Ultimo ${esc(eur(b))}.`;
+  return `Nel periodo <span class="${cls(b-a)}">${pct((b/a-1)*100)}</span>. Ultimo ${esc(eur(b))}.`+srText(o);
 }
 function crossTip(p){
   const o=lw, tip=$('#tip'); if(!o||!tip) return;
