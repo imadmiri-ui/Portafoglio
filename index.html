@@ -155,6 +155,38 @@ details.set label{display:block;margin-top:12px;font-size:14px}
 .setTok{margin-top:14px;padding-top:10px;border-top:1px solid var(--line)}
 .attr{font-size:11.5px;color:var(--muted);margin:4px 0 0}
 .attr a{color:var(--muted)}
+/* Schede numeriche: poche parole, numero grande */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px;margin-top:12px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.stat .lbl{font-size:12px;color:var(--muted);line-height:1.3}
+.stat .val{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;font-size:23px;font-weight:600;line-height:1.15;margin-top:3px}
+.stat .sub{font-size:12px;color:var(--muted);margin-top:2px}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12.5px;font-weight:600;background:var(--soft)}
+.pill.up{color:var(--up)}.pill.down{color:var(--down)}
+/* Affidabilità: barra con riferimento al 50% */
+.srcrow{padding:14px 0;border-bottom:1px solid var(--line)}
+.srchead{display:flex;align-items:center;gap:10px}
+.srchead .nm{font-weight:600}
+.srchead .bd{margin-left:auto;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+.srcnum{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;font-size:21px;font-weight:600;margin-top:6px}
+.acc{position:relative;height:9px;border-radius:999px;background:var(--soft);margin-top:8px;overflow:hidden}
+.acc i{position:absolute;left:0;top:0;bottom:0;border-radius:999px;display:block}
+.acc u{position:absolute;top:0;bottom:0;left:50%;width:2px;background:var(--muted);opacity:.55}
+.accnote{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);margin-top:4px}
+details.help{border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-top:14px;background:var(--surface)}
+details.help summary{font-size:13.5px;color:var(--muted);cursor:pointer}
+details.help p{font-size:13px;color:var(--muted);margin:10px 0 0}
+/* Movimento: discreto, e disattivato se il sistema lo chiede */
+@media (prefers-reduced-motion:no-preference){
+  #home,#detail,#forecast,#news,#tips,#ledger{animation:fadeUp .22s ease both}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+  .card{animation:slideUp .2s ease both}
+  @keyframes slideUp{from{transform:translateY(14px)}to{transform:none}}
+  .row,.chip,.ghost,.primary,.stat,.res{transition:transform .1s ease,background-color .15s ease,border-color .15s ease}
+  .row:active,.chip:active,.ghost:active,.primary:active,.res:active{transform:scale(.985)}
+  .acc i{transition:width .5s ease}
+  .alloc svg circle{transition:stroke-dasharray .5s ease}
+}
 /* Grafico a schermo intero */
 .fsbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px}
 .cw.fs{position:fixed;inset:0;z-index:30;background:var(--bg);display:flex;flex-direction:column;
@@ -539,7 +571,7 @@ function renderHome(){
     return `<button class="row" type="button" data-id="${esc(r.id)}">
       ${img?`<img src="${esc(img)}" alt="" loading="lazy">`:'<span class="ph"></span>'}
       <span><span class="n">${esc(r.h.name)}</span><br><span class="s">${qf(r.qty)} ${esc(sym(r.h))}</span></span>
-      <span class="r"><span class="n">${eur(r.value)}</span><br><span class="s ${cls(r.pnlPct)}">${pct(r.pnlPct)}</span></span>
+      <span class="r"><span class="n" style="font-size:16.5px">${eur(r.value)}</span><br><span class="pill ${cls(r.pnlPct)}">${pct(r.pnlPct)}</span></span>
     </button>`;
   }).join('');
 }
@@ -560,6 +592,8 @@ function drawDonut(rows,tot,count){
 }
 
 const kv=(l,v,c='')=>`<div><dt>${l}</dt><dd class="${c}">${v}</dd></div>`;
+/* Scheda numerica: etichetta corta, numero grande, dettaglio sotto */
+const st=(l,v,sub='',c='')=>`<div class="stat"><div class="lbl">${l}</div><div class="val ${c}">${v}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`;
 const RANGES=[['1','24h'],['7','7 giorni'],['30','30 giorni'],['365','1 anno'],['c1m','Candele 1m'],['c5m','Candele 5m'],['c1h','Candele 1h']];
 function updRanges(){document.querySelectorAll('#detail .ranges button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.days===view.days)));}
 /* Lo scheletro (grafico incluso) si costruisce una volta per token: gli aggiornamenti periodici
@@ -601,16 +635,13 @@ function renderDetail(){
   const lots=h.lots.slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
   const sales=(h.sales||[]).slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
   $('#dInfo').innerHTML=`
-    <section><h2>La tua posizione</h2><dl class="kv">
-      ${kv('Quantità',qf(s.qty)+' '+esc(sym(h)))}
-      ${kv('Prezzo medio di entrata',eur(s.avg))}
-      ${kv('Costo totale',eur(s.cost))}
-      ${kv('Valore attuale',eur(s.value))}
-      ${kv('Profitto / perdita',eurS(s.pnl),cls(s.pnl))}
-      ${kv('Rendimento sul costo',pct(s.pnlPct),cls(s.pnlPct))}
-      ${kv('Peso nel portafoglio',ok(w)?nfP.format(w)+'%':'—')}
-      ${sales.length?kv('Profitto realizzato',eurS(s.realized),cls(s.realized)):''}
-    </dl></section>
+    <section><h2>La tua posizione</h2><div class="stats">
+      ${st('Valore attuale',eur(s.value),`${qf(s.qty)} ${esc(sym(h))}`)}
+      ${st('Profitto / perdita',eurS(s.pnl),pct(s.pnlPct)+' sul costo',cls(s.pnl))}
+      ${st('Prezzo medio',eur(s.avg),'costo totale '+eur(s.cost))}
+      ${st('Peso',ok(w)?nfP.format(w)+'%':'—','del portafoglio')}
+      ${sales.length?st('Realizzato',eurS(s.realized),'da vendite e conversioni',cls(s.realized)):''}
+    </div></section>
     <section><h2>Mercato</h2><dl class="kv">
       ${kv('Variazione 1h',pct(m.price_change_percentage_1h_in_currency),cls(m.price_change_percentage_1h_in_currency))}
       ${kv('Variazione 7 giorni',pct(m.price_change_percentage_7d_in_currency),cls(m.price_change_percentage_7d_in_currency))}
@@ -1137,14 +1168,17 @@ async function runSignals(force){
    Ogni giorno viene registrata la direzione indicata da ciascuna fonte. Dopo 3, 7 e 14
    giorni l'esito reale viene classificato con la banda di volatilità del momento: sopra
    la banda = salita confermata, sotto = discesa, dentro = movimento non significativo.
-   L'accuratezza si misura SOLO sulle previsioni in cui la fonte si espone, cioè indica
-   rialzo o ribasso. Contare anche i "neutro" premierebbe chi non si sbilancia mai: dato
-   che il movimento resta dentro la banda in circa due casi su tre, una fonte silenziosa
-   sembrerebbe infallibile senza aver mai preso posizione. La frequenza di esposizione è
-   mostrata a parte, perché una fonte precisa ma rarissima vale meno di una precisa e
-   frequente. La percentuale, smorzata verso il 50% per non farsi ingannare da pochi casi,
-   diventa il peso della fonte. Una fonte sotto la casualità pesa meno, non viene
-   invertita: un campione piccolo non basta per usarla al contrario. */
+   L'accuratezza si misura solo sui casi DECISI: quelli in cui la fonte si è esposta
+   (rialzo o ribasso) E il mercato si è mosso davvero oltre la banda. Lì la domanda è
+   binaria, su o giù, e il riferimento onesto è il 50%. I casi in cui il mercato non si è
+   mosso non sono né successi né errori: sono previsioni senza esito, e vengono contate a
+   parte. Contare quei casi come errori schiaccerebbe tutte le fonti verso il 15%, perché
+   il prezzo resta dentro la banda nella maggior parte dei giorni; contarli come successi
+   premierebbe chi non si sbilancia mai. Esposizione e casi decisi sono mostrati a parte,
+   perché una fonte precisa ma rarissima vale meno di una precisa e frequente. La
+   percentuale, smorzata verso il 50% per non farsi ingannare da pochi casi, diventa il
+   peso. Una fonte sotto la casualità pesa meno, non viene invertita: un campione piccolo
+   non basta per usarla al contrario. */
 const HOR=[3,7,14], PRED_MAX=3000, PRIOR=15;
 const SRC=['Tecnica','Momentum','Notizie','Social','YouTube','Clima di mercato'];
 function predLoad(){try{const a=JSON.parse(localStorage.getItem(KEY+'-pred')||'[]'); return Array.isArray(a)?a:[];}catch(e){return [];}}
@@ -1164,7 +1198,7 @@ function outcome(p0,p1,sd,hz){
 function priceMap(id){const c=histLoad(id), m={}; ((c&&c.d)||[]).forEach(([k,v])=>{m[k]=v;}); return m;}
 /* Esiti delle previsioni registrate davvero (tutte le fonti). */
 function calibLive(){
-  const agg={}; SRC.forEach(s=>{agg[s]={n:0,exp:0,hit:0,h:{}}; HOR.forEach(x=>{agg[s].h[x]={n:0,exp:0,hit:0};});});
+  const agg={}; SRC.forEach(s=>{agg[s]={n:0,exp:0,dec:0,hit:0,h:{}}; HOR.forEach(x=>{agg[s].h[x]={n:0,exp:0,dec:0,hit:0};});});
   const pm={}; Object.keys(state.holdings).forEach(id=>{pm[id]=priceMap(id);});
   predLoad().forEach(P=>{
     const m=pm[P.id]; if(!m) return;
@@ -1174,9 +1208,11 @@ function calibLive(){
       Object.entries(P.r||{}).forEach(([s,dir])=>{
         if(!agg[s]) return;
         agg[s].n++; agg[s].h[hz].n++;
-        if(dir===0) return; /* niente posizione: non conta né come successo né come errore */
+        if(dir===0) return; /* nessuna posizione presa */
+        agg[s].exp++; agg[s].h[hz].exp++;
+        if(o===0) return; /* mercato fermo dentro la banda: previsione senza esito */
         const hit=dir===o?1:0;
-        agg[s].exp++; agg[s].hit+=hit; agg[s].h[hz].exp++; agg[s].h[hz].hit+=hit;
+        agg[s].dec++; agg[s].hit+=hit; agg[s].h[hz].dec++; agg[s].h[hz].hit+=hit;
       });
     });
   });
@@ -1188,7 +1224,7 @@ let btMem=null;
 function backtest(){
   const ids=Object.keys(state.holdings).sort().join(',');
   if(btMem&&btMem.k===ids) return btMem.v;
-  const out={Tecnica:{n:0,exp:0,hit:0},Momentum:{n:0,exp:0,hit:0}};
+  const out={Tecnica:{n:0,exp:0,dec:0,hit:0},Momentum:{n:0,exp:0,dec:0,hit:0}};
   for(const id of Object.keys(state.holdings)){
     const c=histLoad(id); if(!c||!Array.isArray(c.d)||c.d.length<80) continue;
     const rows=c.d.slice().sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
@@ -1199,23 +1235,24 @@ function backtest(){
       for(const hz of HOR){
         const j=i+hz; if(j>=cl.length) continue;
         const o=outcome(cl[i],cl[j],a.sd,hz);
-        out.Tecnica.n++; if(dT!==0){out.Tecnica.exp++; if(dT===o) out.Tecnica.hit++;}
-        out.Momentum.n++; if(dM!==0){out.Momentum.exp++; if(dM===o) out.Momentum.hit++;}
+        out.Tecnica.n++; if(dT!==0){out.Tecnica.exp++; if(o!==0){out.Tecnica.dec++; if(dT===o) out.Tecnica.hit++;}}
+        out.Momentum.n++; if(dM!==0){out.Momentum.exp++; if(o!==0){out.Momentum.dec++; if(dM===o) out.Momentum.hit++;}}
       }
     }
   }
   btMem={k:ids,v:out};
   return out;
 }
-/* Peso: calcolato sulle sole previsioni esposte. 1 = nella media, minimo 0,2, massimo 1,5.
+/* Peso: calcolato sui soli casi decisi. 1 = come il caso, minimo 0,2, massimo 1,5.
    Con pochi dati lo smorzamento tiene il peso vicino a 1. */
 function weights(){
   const live=calibLive(), bt=backtest(), w={};
   SRC.forEach(s=>{
-    const L=live[s]||{n:0,exp:0,hit:0,h:{}}, B=bt[s]||{n:0,exp:0,hit:0};
-    const n=L.n+B.n, exp=L.exp+B.exp, hit=L.hit+B.hit;
-    const p=(hit+PRIOR)/(exp+2*PRIOR);
-    w[s]={n,exp,hit,nLive:L.n,nBt:B.n,p,rate:n?exp/n:0,w:Math.max(0.2,Math.min(1.5,1+4*(p-0.5))),h:L.h};
+    const L=live[s]||{n:0,exp:0,dec:0,hit:0,h:{}}, B=bt[s]||{n:0,exp:0,dec:0,hit:0};
+    const n=L.n+B.n, exp=L.exp+B.exp, dec=L.dec+B.dec, hit=L.hit+B.hit;
+    const p=(hit+PRIOR)/(dec+2*PRIOR);
+    w[s]={n,exp,dec,hit,nLive:L.n,nBt:B.n,p,rate:n?exp/n:0,decRate:exp?dec/exp:0,
+      w:Math.max(0.2,Math.min(1.5,1+4*(p-0.5))),h:L.h};
   });
   return w;
 }
@@ -1256,7 +1293,8 @@ function confHtml(id,a){
 function renderForecast(noKick){
   const box=$('#forecast'), ids=Object.keys(state.holdings);
   const head=`<section><h2>Previsioni</h2>
-    <p class="intro">Ogni token è valutato su più fonti: analisi tecnica degli ultimi 90 giorni, notizie da tutto il mondo, post Mastodon, video YouTube (se inserisci la chiave) e clima di mercato. Le conferme dicono se le fonti vanno nella stessa direzione: non prevedono il futuro. Il tono di notizie e video è una stima automatica basata su parole chiave nei titoli.</p>
+    <p class="intro">Più fonti a confronto per ogni token: tecnica, notizie, social, video e clima di mercato. Dicono se concordano, non cosa farà il prezzo.</p>
+    <details class="help"><summary>Come funziona</summary><p>La tecnica usa gli ultimi 90 giorni di prezzi. Il tono di notizie e video è una stima automatica dalle parole chiave nei titoli. Ogni fonte pesa secondo l'affidabilità misurata nel Registro.</p></details>
     <div class="bar"><span class="m small">${taBusy||sigBusy?'Analisi in corso…':'Tecnica ogni 6 ore, fonti ogni 30 minuti'}</span><button class="link" id="fcRefresh" type="button">Ricalcola</button></div>`;
   if(!ids.length){box.innerHTML=head+'<p class="empty">Aggiungi almeno un token nel portafoglio per vedere le previsioni.</p></section>'; bindFc(); return;}
   const cards=ids.map(id=>{
@@ -1276,7 +1314,7 @@ function renderForecast(noKick){
     if(a.trend==='up') inv=`Scenario rialzista invalidato con chiusura giornaliera sotto ${eur(a.s20)} (media 20 giorni). Segnale più forte sotto ${eur(a.lo30)} (minimo 30 giorni).`;
     else if(a.trend==='down') inv=`Scenario ribassista invalidato con chiusura giornaliera sopra ${eur(a.s20)} (media 20 giorni). Conferma di debolezza sotto ${eur(a.lo30)} (minimo 30 giorni).`;
     else inv=`Direzione non definita: attendere una rottura sopra ${eur(a.hi30)} o sotto ${eur(a.lo30)} (massimo e minimo 30 giorni).`;
-    const st=stats(id);
+    const st2=stats(id);
     return `<div class="fc">${top}<span class="badge ${lab[1]}">${lab[0]}</span></div>
       <ul>
         <li>Prezzo ${eur(p)}, <span class="${p>=a.s20?'up':'down'}">${p>=a.s20?'sopra':'sotto'}</span> la media 20 giorni (${eur(a.s20)})</li>
@@ -1285,7 +1323,7 @@ function renderForecast(noKick){
         <li>RSI 14: ${nfP.format(a.rsi)} (${rsiTxt})</li>
         <li>Volatilità giornaliera: ${nfP.format(a.vol)}%</li>
         <li>Oscillazione tipica a 7 giorni: ${eur(lo7)} – ${eur(hi7)} <span class="m">(circa 2 casi su 3, non è un obiettivo)</span></li>
-        ${st.avg>0?`<li>Tuo prezzo medio ${eur(st.avg)} (<span class="${cls(p-st.avg)}">${pct((p/st.avg-1)*100)}</span>)</li>`:''}
+        ${st2.avg>0?`<li>Tuo prezzo medio ${eur(st2.avg)} (<span class="${cls(p-st2.avg)}">${pct((p/st2.avg-1)*100)}</span>)</li>`:''}
       </ul>
       <div class="inv">${inv}</div>
       ${(savePred(id,a,confluence(id,a),p),confHtml(id,a))}
@@ -1496,7 +1534,7 @@ function zoneOf(id,a,p){
 /* Vendi e ricompra: sposti q token (costo dep), vendi a p con commissione f, riacquisti a p2 con commissione f,
    riporti sulla Tangem (costo wd). Token finali = q·p·(1-f)²/p2 - wd; confronto con q + dep. */
 function accPlan(id){
-  const h=state.holdings[id], m=market[id]||{}, c=taLoadCache(id), st=stats(id);
+  const h=state.holdings[id], m=market[id]||{}, c=taLoadCache(id), st2=stats(id);
   if(!c) return {h,wait:'Dati in caricamento…'};
   if(c.err) return {h,wait:c.err};
   const a=analyze(c.closes); if(!a) return {h,wait:'Storico prezzi troppo breve.'};
@@ -1513,10 +1551,10 @@ function accPlan(id){
   if(ok(settings.budget)&&settings.budget>0&&share>0) buy.push(`Regola del budget: ${Math.round(share*100)}% del budget mensile, cioè ${eur(settings.budget*share)}.`);
   if(f!=null&&wd!=null&&wd>0) buy.push(`Trasferisci sulla Tangem solo quando hai accumulato almeno ${eur(100*wd*p/(1-f))} su Revolut X: così la commissione di prelievo resta sotto l’1% dei token comprati.`);
   let swing=null;
-  if(Z.zone==='hot'&&st.qty>0){
+  if(Z.zone==='hot'&&st2.qty>0){
     if(f==null||dep==null||wd==null) swing={need:true};
     else{
-      const q=st.qty*0.2, k=q*p*(1-f)*(1-f);
+      const q=st2.qty*0.2, k=q*p*(1-f)*(1-f);
       const pBE=k/(q+dep+wd), pT=k/(q*1.05+dep+wd), up7=p*Math.exp(2*a.sd*Math.sqrt(7));
       const tokUp=k/up7-wd-q-dep, drop=(1-pT/p)*100, typ=(1-Math.exp(-a.sd*Math.sqrt(7)))*100;
       swing={q,pBE,pT,up7,tokUp,drop,typ,good:pT>0&&drop<=2*typ};
@@ -1567,7 +1605,7 @@ function renderTips(noKick){
   box.innerHTML=`<section><h2>Regola del giorno</h2>
     <div class="daytip">${esc(tip)}</div></section>
     <section><h2>Piano di accumulo</h2>
-    <p class="intro">Obiettivo: aumentare il numero di token. I token restano sulla Tangem e ogni operazione passa da Revolut X, quindi l’app tiene conto di commissioni e trasferimenti. Regole automatiche, non consulenza finanziaria: nessuna garantisce il risultato.</p>
+    <p class="intro">Obiettivo: aumentare il numero di token. Regole automatiche, non consulenza finanziaria.</p>
     ${settingsHtml()}
     ${ids.length?plans:'<p class="empty">Aggiungi i tuoi token per ricevere un piano.</p>'}</section>
     ${checks.length?`<section><h2>Controlli sul portafoglio</h2><ul class="checks">${checks.map(([x,y])=>`<li><span class="lv">${esc(x)}</span><br>${esc(y)}</li>`).join('')}</ul></section>`:''}`;
@@ -1754,17 +1792,24 @@ function renderLedger(noKick){
     return `<li><span class="lv">${esc(k)}</span><br>Capitale esterno ${eur(m.inv-(m.conv||0))}${m.conv?`, più ${eur(m.conv)} movimentati in conversioni`:''}${m.inc?`, incassato ${eur(m.inc)}`:''}. Token: ${t}</li>`;
   }).join('');
   box.innerHTML=`<section><h2>Registro</h2>
-    <p class="intro">Storico ricostruito dalle tue operazioni e dai prezzi di chiusura giornalieri di CoinGecko (massimo 365 giorni indietro). Il valore passato è un calcolo, non una registrazione: dipende dalle date che hai inserito.</p>
+    <p class="intro">Valore ricostruito giorno per giorno dalle tue operazioni.</p>
     ${errs.length?`<p class="m small">${esc(errs.join('. '))}</p>`:''}
     ${S&&S.cut?`<p class="m small">La prima operazione è del ${esc(dIt(S.firstEv))}, ma i prezzi storici partono dal ${esc(dIt(S.start))}: il grafico inizia da lì.</p>`:''}
     <div class="chips" role="group" aria-label="Serie da mostrare">${btns.map(([k,l])=>`<button class="chip" type="button" data-led="${esc(k)}" aria-pressed="${ledView===k}">${esc(l)}</button>`).join('')}</div>
     ${chart}
     <p class="tip" id="ledTip">${tipTxt}</p>
     <div class="bar"><span class="m small">${histBusy?'Ricostruzione in corso…':'Prezzi storici aggiornati ogni 24 ore'}</span><button class="link" id="ledRefresh" type="button">Ricalcola</button></div>
+    <details class="help"><summary>Da dove viene questo grafico</summary><p>Quantità posseduta ogni giorno per il prezzo di chiusura di quel giorno, da CoinGecko, fino a 365 giorni indietro. È un calcolo, non una registrazione: dipende dalle date che hai inserito.</p></details>
     </section>
     <section><h2>Operazioni (${ev.length})</h2>
-    <dl class="kv">${kv('Capitale esterno investito',eur(inv-conv))}${kv('Movimentato in conversioni',eur(conv))}${kv('Incassato da vendite',eur(inc))}${kv('Risultato realizzato',eurS(real),cls(real))}${kv('Commissioni pagate',eur(fee))}</dl>
-    <p class="m small">Il capitale esterno è il denaro entrato davvero nel portafoglio: la somma degli acquisti meno il controvalore delle conversioni, che spostano valore tra token senza aggiungerne.</p>
+    <div class="stats">
+      ${st('Capitale esterno',eur(inv-conv),'denaro tuo entrato')}
+      ${st('In conversioni',eur(conv),'giri tra token')}
+      ${st('Incassato',eur(inc),'da vendite')}
+      ${st('Realizzato',eurS(real),'su vendite e conversioni',cls(real))}
+      ${fee>0?st('Commissioni',eur(fee),'pagate in euro'):''}
+    </div>
+    <details class="help"><summary>Come si legge</summary><p>Il capitale esterno è il denaro entrato davvero: acquisti meno controvalore delle conversioni, che spostano valore tra token senza aggiungerne. Il realizzato confronta ogni uscita con il prezzo medio di carico del momento.</p></details>
     <ul class="lots" style="margin-top:14px">${rows.reverse().join('')}</ul></section>
     <section><h2>Riepilogo mensile</h2><ul class="checks">${mesi}</ul></section>
     ${calibHtml()}`;
@@ -1782,19 +1827,29 @@ function renderLedger(noKick){
 function calibHtml(){
   const W=weights(), nL=predLoad().length;
   const rows=SRC.map(s=>{
-    const x=W[s], hs=HOR.map(hz=>{const d=(x.h&&x.h[hz])||{n:0,exp:0,hit:0}; return d.exp?`${hz}g ${nfP.format(d.hit/d.exp*100)}% su ${d.exp} esposte`:`${hz}g nessuna esposizione`;}).join(', ');
-    const fonte=x.nBt?`${x.nLive} da previsioni registrate, ${x.nBt} da ricalcolo storico`:`${x.nLive} esiti registrati`;
-    const aff=x.exp?`${nfP.format(x.hit/x.exp*100)}% corrette quando prende posizione, su ${x.exp} volte`
-      :(x.n?`non ha mai preso posizione in ${x.n} verifiche`:'nessuna verifica ancora');
-    const espo=x.n?`Si espone nel ${nfP.format(x.rate*100)}% dei casi.`:'';
-    return `<li><span class="lv">${esc(s)}</span> <span class="badge ${x.w>1.05?'up':x.w<0.95?'down':'m'}">peso ${nfP.format(x.w)}</span><br>
-      ${esc(aff)}<br><span class="s">${esc(espo)} ${esc(fonte)}. ${esc(hs)}</span></li>`;
+    const x=W[s], a=x.dec?x.hit/x.dec*100:null;
+    const col=a==null?'m':a>=55?'up':a<=45?'down':'m';
+    const hs=HOR.map(hz=>{const d=(x.h&&x.h[hz])||{n:0,exp:0,dec:0,hit:0}; return d.dec?`${hz}g ${nfP.format(d.hit/d.dec*100)}%`:`${hz}g —`;}).join(' · ');
+    const head=`<div class="srchead"><span class="nm">${esc(s)}</span><span class="bd ${x.w>1.05?'up':x.w<0.95?'down':'m'}">peso ${nfP.format(x.w)}</span></div>`;
+    if(a==null){
+      const why=x.exp?`${x.exp} previsioni, nessuna ancora decisa dal mercato`:(x.n?`mai esposta in ${x.n} verifiche`:'in attesa dei primi esiti');
+      return `<div class="srcrow">${head}<div class="srcnum m">—</div><div class="accnote"><span>${esc(why)}</span></div></div>`;
+    }
+    return `<div class="srcrow">${head}
+      <div class="srcnum ${col}">${nfP.format(a)}% <span class="m" style="font-size:13px;font-weight:400">di lato giusto</span></div>
+      <div class="acc"><i style="width:${Math.max(2,Math.min(100,a)).toFixed(1)}%;background:var(--${col==='up'?'up':col==='down'?'down':'muted'})"></i><u></u></div>
+      <div class="accnote"><span>su ${x.dec} casi decisi</span><span>caso 50%</span></div>
+      <div class="accnote"><span>${nfP.format(x.rate*100)}% esposta · ${nfP.format(x.decRate*100)}% decisi</span><span>${esc(hs)}</span></div></div>`;
   }).join('');
   const tot=SRC.reduce((a,s)=>a+W[s].n,0);
   return `<section><h2>Affidabilità delle previsioni</h2>
-    <p class="intro">Ogni giorno l'app registra la direzione indicata da ciascuna fonte e la confronta con il prezzo reale dopo 3, 7 e 14 giorni. L'esito conta come direzione presa solo se il prezzo esce dalla banda di volatilità: dentro la banda il movimento non è significativo e vale come "neutro". La percentuale di successo determina il peso della fonte nel verdetto delle Previsioni.</p>
-    <ul class="checks">${rows}</ul>
-    <p class="m small">${tot?`${tot} verifiche complessive, ${nL} previsioni registrate finora.`:'Nessuna verifica disponibile: servono prezzi storici e qualche giorno di previsioni registrate.'} L'accuratezza è calcolata solo sulle volte in cui la fonte prende posizione: un "neutro" non conta né come successo né come errore, altrimenti chi non si sbilancia mai sembrerebbe infallibile. Il peso parte da 1 e si sposta solo con i dati: con pochi casi resta vicino a 1, perché una serie fortunata non è una prova. Una fonte sotto la casualità viene ridotta di peso, mai invertita. Tecnica e Momentum includono il ricalcolo sui prezzi storici; notizie, social, video e clima di mercato partono da zero, perché quei dati passati non sono recuperabili.</p></section>`;
+    <p class="intro">Quanto azzecca ogni fonte, misurato sui casi in cui il mercato ha davvero deciso.</p>
+    ${rows}
+    <p class="m small" style="margin-top:12px">${tot?`${tot} verifiche, ${nL} previsioni registrate.`:'Nessuna verifica ancora.'}</p>
+    <details class="help"><summary>Come si legge</summary>
+      <p>Un caso è deciso quando la fonte si espone (rialzo o ribasso) e il prezzo esce davvero dalla banda di volatilità. Lì la risposta è binaria, quindi il caso vale 50%: la linea grigia al centro della barra è quel riferimento.</p>
+      <p>Le previsioni rimaste dentro la banda non contano né come successo né come errore. "Esposta" dice quanto spesso la fonte si sbilancia, "decisi" quante di quelle volte il mercato si è mosso.</p>
+      <p>Il peso parte da 1 e si muove solo con i dati: con pochi casi resta vicino a 1, perché una serie fortunata non è una prova. Una fonte sotto la casualità viene ridotta, mai invertita. Tecnica e Momentum includono il ricalcolo storico; le altre partono da zero.</p></details></section>`;
 }
 
 /* ---------- navigazione (hash: funziona anche il tasto indietro di Android) ---------- */
