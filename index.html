@@ -1133,6 +1133,85 @@ async function runSignals(force){
     }
   }finally{sigBusy=false; refreshTaViews();}
 }
+/* ---------- calibrazione: confronto tra previsioni ed esiti reali ----------
+   Ogni giorno viene registrata la direzione indicata da ciascuna fonte. Dopo 3, 7 e 14
+   giorni l'esito reale viene classificato con la banda di volatilità del momento: sopra
+   la banda = salita confermata, sotto = discesa, dentro = movimento non significativo.
+   La percentuale di successo, smorzata verso il 50% per non farsi ingannare da pochi
+   casi, diventa il peso della fonte nel verdetto. Una fonte sotto la casualità pesa meno,
+   non viene invertita: un campione piccolo non basta per usarla al contrario. */
+const HOR=[3,7,14], PRED_MAX=3000, PRIOR=15;
+const SRC=['Tecnica','Momentum','Notizie','Social','YouTube','Clima di mercato'];
+function predLoad(){try{const a=JSON.parse(localStorage.getItem(KEY+'-pred')||'[]'); return Array.isArray(a)?a:[];}catch(e){return [];}}
+function savePred(id,a,C,p){
+  if(!sig[id]||!(p>0)||!ok(a.sd)) return;
+  const d=localDate(), all=predLoad();
+  if(all.some(x=>x.d===d&&x.id===id)) return;
+  const r={}; C.rows.forEach(row=>{if(row[1]!==null) r[row[0]]=row[1];});
+  all.push({d,id,p,sd:a.sd,r});
+  try{localStorage.setItem(KEY+'-pred',JSON.stringify(all.slice(-PRED_MAX)));}catch(e){}
+}
+const addDays=(k,n)=>dayKey(dayMs(k)+n*86400000);
+function outcome(p0,p1,sd,hz){
+  const lo=p0*Math.exp(-sd*Math.sqrt(hz)), hi=p0*Math.exp(sd*Math.sqrt(hz));
+  return p1>hi?1:p1<lo?-1:0;
+}
+function priceMap(id){const c=histLoad(id), m={}; ((c&&c.d)||[]).forEach(([k,v])=>{m[k]=v;}); return m;}
+/* Esiti delle previsioni registrate davvero (tutte le fonti). */
+function calibLive(){
+  const agg={}; SRC.forEach(s=>{agg[s]={n:0,hit:0,h:{}}; HOR.forEach(x=>{agg[s].h[x]={n:0,hit:0};});});
+  const pm={}; Object.keys(state.holdings).forEach(id=>{pm[id]=priceMap(id);});
+  predLoad().forEach(P=>{
+    const m=pm[P.id]; if(!m) return;
+    HOR.forEach(hz=>{
+      const p1=m[addDays(P.d,hz)]; if(p1==null) return;
+      const o=outcome(P.p,p1,P.sd,hz);
+      Object.entries(P.r||{}).forEach(([s,dir])=>{
+        if(!agg[s]) return;
+        const hit=dir===o?1:0;
+        agg[s].n++; agg[s].hit+=hit; agg[s].h[hz].n++; agg[s].h[hz].hit+=hit;
+      });
+    });
+  });
+  return agg;
+}
+/* Tecnica e Momentum sono regole deterministiche: si possono ricalcolare all'indietro
+   sui prezzi storici. Notizie, social e video no, quei dati passati non esistono. */
+let btMem=null;
+function backtest(){
+  const ids=Object.keys(state.holdings).sort().join(',');
+  if(btMem&&btMem.k===ids) return btMem.v;
+  const out={Tecnica:{n:0,hit:0},Momentum:{n:0,hit:0}};
+  for(const id of Object.keys(state.holdings)){
+    const c=histLoad(id); if(!c||!Array.isArray(c.d)||c.d.length<80) continue;
+    const rows=c.d.slice().sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+    const cl=rows.map(r=>r[1]).filter(ok);
+    for(let i=60;i<cl.length-HOR[0];i++){
+      const a=analyze(cl.slice(Math.max(0,i-89),i+1)); if(!a) continue;
+      const dT=a.trend==='up'?1:a.trend==='down'?-1:0, dM=a.rsi>=70?-1:a.rsi<=30?1:0;
+      for(const hz of HOR){
+        const j=i+hz; if(j>=cl.length) continue;
+        const o=outcome(cl[i],cl[j],a.sd,hz);
+        out.Tecnica.n++; if(dT===o) out.Tecnica.hit++;
+        out.Momentum.n++; if(dM===o) out.Momentum.hit++;
+      }
+    }
+  }
+  btMem={k:ids,v:out};
+  return out;
+}
+/* Peso: 1 se la fonte è nella media, più alto se azzecca più spesso, minimo 0,2.
+   Con pochi dati lo smorzamento tiene il peso vicino a 1. */
+function weights(){
+  const live=calibLive(), bt=backtest(), w={};
+  SRC.forEach(s=>{
+    const L=live[s]||{n:0,hit:0,h:{}}, B=bt[s]||{n:0,hit:0};
+    const n=L.n+B.n, hit=L.hit+B.hit;
+    const p=(hit+PRIOR)/(n+2*PRIOR);
+    w[s]={n,hit,nLive:L.n,nBt:B.n,p,w:Math.max(0.2,Math.min(1.5,1+4*(p-0.5))),h:L.h};
+  });
+  return w;
+}
 /* Direzione per fonte: 1 rialzista, -1 ribassista, 0 neutra, null non disponibile.
    RSI e Fear & Greed sono letti in modo contrarian (eccessi = rischio di inversione). */
 function confluence(id,a){
@@ -1152,13 +1231,18 @@ function confluence(id,a){
   const F=fng&&!fng.err?fng.v:null;
   rows.push(['Clima di mercato',F==null?null:F<25?1:F>75?-1:0,F==null?'non disponibile':`Fear & Greed ${F}/100, ${fngIt(F)}`]);
   const up=rows.filter(r=>r[1]===1).length, dn=rows.filter(r=>r[1]===-1).length, av=rows.filter(r=>r[1]!==null).length;
-  const verdict=up>=3&&dn===0?'Convergenza rialzista forte':dn>=3&&up===0?'Convergenza ribassista forte':up>dn&&up>=2?'Prevalenza rialzista':dn>up&&dn>=2?'Prevalenza ribassista':'Segnali discordanti o neutri';
-  return {rows,up,dn,av,verdict};
+  const W=weights();
+  let uw=0, dw=0, tw=0;
+  rows.forEach(r=>{const x=(W[r[0]]&&W[r[0]].w)||1; if(r[1]===null) return; tw+=x; if(r[1]===1) uw+=x; else if(r[1]===-1) dw+=x;});
+  const ratio=tw>0?(uw-dw)/tw:0;
+  const verdict=ratio>=0.5?'Convergenza rialzista forte':ratio<=-0.5?'Convergenza ribassista forte':
+    ratio>=0.2?'Prevalenza rialzista':ratio<=-0.2?'Prevalenza ribassista':'Segnali discordanti o neutri';
+  return {rows,up,dn,av,verdict,uw,dw,tw,ratio,W};
 }
 function confHtml(id,a){
   const C=confluence(id,a), S=sig[id]||{};
   const vids=S.yt&&Array.isArray(S.yt.items)?S.yt.items.slice(0,3):[];
-  return `<div class="conf"><div class="n">Conferme: ${esc(C.verdict)}</div><div class="s">${C.up} rialziste, ${C.dn} ribassiste su ${C.av} fonti disponibili</div>
+  return `<div class="conf"><div class="n">Conferme: ${esc(C.verdict)}</div><div class="s">${C.up} rialziste, ${C.dn} ribassiste su ${C.av} fonti disponibili; peso rialzista ${nfP.format(C.uw)} contro ${nfP.format(C.dw)}, fonti pesate per affidabilità misurata</div>
     <ul>${C.rows.map(r=>`<li><span class="${r[1]===1?'up':r[1]===-1?'down':'m'}">${r[1]===1?'▲':r[1]===-1?'▼':'•'}</span> ${esc(r[0])}: ${esc(r[2])}</li>`).join('')}</ul>
     ${vids.length?`<div class="s" style="margin-top:6px">Ultimi video:</div>${vids.map(v=>`<a class="vid" href="https://www.youtube.com/watch?v=${encodeURIComponent(v.id)}" target="_blank" rel="noopener noreferrer">${esc(v.title)}<span class="s">, ${esc(v.ch)}</span></a>`).join('')}`:''}</div>`;
 }
@@ -1197,7 +1281,7 @@ function renderForecast(noKick){
         ${st.avg>0?`<li>Tuo prezzo medio ${eur(st.avg)} (<span class="${cls(p-st.avg)}">${pct((p/st.avg-1)*100)}</span>)</li>`:''}
       </ul>
       <div class="inv">${inv}</div>
-      ${confHtml(id,a)}
+      ${(savePred(id,a,confluence(id,a),p),confHtml(id,a))}
       ${open}</div>`;
   }).join('');
   box.innerHTML=head+cards+'</section>';
@@ -1674,7 +1758,8 @@ function renderLedger(noKick){
     <section><h2>Operazioni (${ev.length})</h2>
     <dl class="kv">${kv('Investito totale',eur(inv))}${kv('Incassato da vendite',eur(inc))}${kv('Risultato realizzato',eurS(real),cls(real))}${kv('Commissioni pagate',eur(fee))}</dl>
     <ul class="lots" style="margin-top:14px">${rows.reverse().join('')}</ul></section>
-    <section><h2>Riepilogo mensile</h2><ul class="checks">${mesi}</ul></section>`;
+    <section><h2>Riepilogo mensile</h2><ul class="checks">${mesi}</ul></section>
+    ${calibHtml()}`;
   document.querySelectorAll('#ledger [data-led]').forEach(b=>b.onclick=()=>{ledView=b.dataset.led; renderLedger(true);});
   $('#ledRefresh').onclick=()=>runHist(true);
   if(S&&S.days.length>1){
@@ -1683,6 +1768,23 @@ function renderLedger(noKick){
     else drawSeries(el,S.days,[{n:sym(state.holdings[ledView]),v:S.tok[ledView],c:cssv('--up')}],qf);
   }
   if(!noKick) runHist(false);
+}
+
+/* Pannello: quanto ha azzeccato ogni fonte e con che peso entra nel verdetto. */
+function calibHtml(){
+  const W=weights(), nL=predLoad().length;
+  const rows=SRC.map(s=>{
+    const x=W[s], hs=HOR.map(hz=>{const d=(x.h&&x.h[hz])||{n:0,hit:0}; return d.n?`${hz}g ${nfP.format(d.hit/d.n*100)}% su ${d.n}`:`${hz}g nessun esito`;}).join(', ');
+    const fonte=x.nBt?`${x.nLive} da previsioni registrate, ${x.nBt} da ricalcolo storico`:`${x.nLive} esiti registrati`;
+    const aff=x.n?`${nfP.format(x.hit/x.n*100)}% di direzioni corrette su ${x.n} verifiche`:'nessuna verifica ancora';
+    return `<li><span class="lv">${esc(s)}</span> <span class="badge ${x.w>1.05?'up':x.w<0.95?'down':'m'}">peso ${nfP.format(x.w)}</span><br>
+      ${esc(aff)}<br><span class="s">${esc(fonte)}. ${esc(hs)}</span></li>`;
+  }).join('');
+  const tot=SRC.reduce((a,s)=>a+W[s].n,0);
+  return `<section><h2>Affidabilità delle previsioni</h2>
+    <p class="intro">Ogni giorno l'app registra la direzione indicata da ciascuna fonte e la confronta con il prezzo reale dopo 3, 7 e 14 giorni. L'esito conta come direzione presa solo se il prezzo esce dalla banda di volatilità: dentro la banda il movimento non è significativo e vale come "neutro". La percentuale di successo determina il peso della fonte nel verdetto delle Previsioni.</p>
+    <ul class="checks">${rows}</ul>
+    <p class="m small">${tot?`${tot} verifiche complessive, ${nL} previsioni registrate finora.`:'Nessuna verifica disponibile: servono prezzi storici e qualche giorno di previsioni registrate.'} Il peso parte da 1 e si sposta solo con i dati: con pochi casi resta vicino a 1, perché una serie fortunata non è una prova. Una fonte sotto la casualità viene ridotta di peso, mai invertita. Tecnica e Momentum includono il ricalcolo sui prezzi storici; notizie, social, video e clima di mercato partono da zero, perché quei dati passati non sono recuperabili.</p></section>`;
 }
 
 /* ---------- navigazione (hash: funziona anche il tasto indietro di Android) ---------- */
