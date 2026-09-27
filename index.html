@@ -1137,9 +1137,14 @@ async function runSignals(force){
    Ogni giorno viene registrata la direzione indicata da ciascuna fonte. Dopo 3, 7 e 14
    giorni l'esito reale viene classificato con la banda di volatilità del momento: sopra
    la banda = salita confermata, sotto = discesa, dentro = movimento non significativo.
-   La percentuale di successo, smorzata verso il 50% per non farsi ingannare da pochi
-   casi, diventa il peso della fonte nel verdetto. Una fonte sotto la casualità pesa meno,
-   non viene invertita: un campione piccolo non basta per usarla al contrario. */
+   L'accuratezza si misura SOLO sulle previsioni in cui la fonte si espone, cioè indica
+   rialzo o ribasso. Contare anche i "neutro" premierebbe chi non si sbilancia mai: dato
+   che il movimento resta dentro la banda in circa due casi su tre, una fonte silenziosa
+   sembrerebbe infallibile senza aver mai preso posizione. La frequenza di esposizione è
+   mostrata a parte, perché una fonte precisa ma rarissima vale meno di una precisa e
+   frequente. La percentuale, smorzata verso il 50% per non farsi ingannare da pochi casi,
+   diventa il peso della fonte. Una fonte sotto la casualità pesa meno, non viene
+   invertita: un campione piccolo non basta per usarla al contrario. */
 const HOR=[3,7,14], PRED_MAX=3000, PRIOR=15;
 const SRC=['Tecnica','Momentum','Notizie','Social','YouTube','Clima di mercato'];
 function predLoad(){try{const a=JSON.parse(localStorage.getItem(KEY+'-pred')||'[]'); return Array.isArray(a)?a:[];}catch(e){return [];}}
@@ -1159,7 +1164,7 @@ function outcome(p0,p1,sd,hz){
 function priceMap(id){const c=histLoad(id), m={}; ((c&&c.d)||[]).forEach(([k,v])=>{m[k]=v;}); return m;}
 /* Esiti delle previsioni registrate davvero (tutte le fonti). */
 function calibLive(){
-  const agg={}; SRC.forEach(s=>{agg[s]={n:0,hit:0,h:{}}; HOR.forEach(x=>{agg[s].h[x]={n:0,hit:0};});});
+  const agg={}; SRC.forEach(s=>{agg[s]={n:0,exp:0,hit:0,h:{}}; HOR.forEach(x=>{agg[s].h[x]={n:0,exp:0,hit:0};});});
   const pm={}; Object.keys(state.holdings).forEach(id=>{pm[id]=priceMap(id);});
   predLoad().forEach(P=>{
     const m=pm[P.id]; if(!m) return;
@@ -1168,8 +1173,10 @@ function calibLive(){
       const o=outcome(P.p,p1,P.sd,hz);
       Object.entries(P.r||{}).forEach(([s,dir])=>{
         if(!agg[s]) return;
+        agg[s].n++; agg[s].h[hz].n++;
+        if(dir===0) return; /* niente posizione: non conta né come successo né come errore */
         const hit=dir===o?1:0;
-        agg[s].n++; agg[s].hit+=hit; agg[s].h[hz].n++; agg[s].h[hz].hit+=hit;
+        agg[s].exp++; agg[s].hit+=hit; agg[s].h[hz].exp++; agg[s].h[hz].hit+=hit;
       });
     });
   });
@@ -1181,7 +1188,7 @@ let btMem=null;
 function backtest(){
   const ids=Object.keys(state.holdings).sort().join(',');
   if(btMem&&btMem.k===ids) return btMem.v;
-  const out={Tecnica:{n:0,hit:0},Momentum:{n:0,hit:0}};
+  const out={Tecnica:{n:0,exp:0,hit:0},Momentum:{n:0,exp:0,hit:0}};
   for(const id of Object.keys(state.holdings)){
     const c=histLoad(id); if(!c||!Array.isArray(c.d)||c.d.length<80) continue;
     const rows=c.d.slice().sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
@@ -1192,23 +1199,23 @@ function backtest(){
       for(const hz of HOR){
         const j=i+hz; if(j>=cl.length) continue;
         const o=outcome(cl[i],cl[j],a.sd,hz);
-        out.Tecnica.n++; if(dT===o) out.Tecnica.hit++;
-        out.Momentum.n++; if(dM===o) out.Momentum.hit++;
+        out.Tecnica.n++; if(dT!==0){out.Tecnica.exp++; if(dT===o) out.Tecnica.hit++;}
+        out.Momentum.n++; if(dM!==0){out.Momentum.exp++; if(dM===o) out.Momentum.hit++;}
       }
     }
   }
   btMem={k:ids,v:out};
   return out;
 }
-/* Peso: 1 se la fonte è nella media, più alto se azzecca più spesso, minimo 0,2.
+/* Peso: calcolato sulle sole previsioni esposte. 1 = nella media, minimo 0,2, massimo 1,5.
    Con pochi dati lo smorzamento tiene il peso vicino a 1. */
 function weights(){
   const live=calibLive(), bt=backtest(), w={};
   SRC.forEach(s=>{
-    const L=live[s]||{n:0,hit:0,h:{}}, B=bt[s]||{n:0,hit:0};
-    const n=L.n+B.n, hit=L.hit+B.hit;
-    const p=(hit+PRIOR)/(n+2*PRIOR);
-    w[s]={n,hit,nLive:L.n,nBt:B.n,p,w:Math.max(0.2,Math.min(1.5,1+4*(p-0.5))),h:L.h};
+    const L=live[s]||{n:0,exp:0,hit:0,h:{}}, B=bt[s]||{n:0,exp:0,hit:0};
+    const n=L.n+B.n, exp=L.exp+B.exp, hit=L.hit+B.hit;
+    const p=(hit+PRIOR)/(exp+2*PRIOR);
+    w[s]={n,exp,hit,nLive:L.n,nBt:B.n,p,rate:n?exp/n:0,w:Math.max(0.2,Math.min(1.5,1+4*(p-0.5))),h:L.h};
   });
   return w;
 }
@@ -1775,17 +1782,19 @@ function renderLedger(noKick){
 function calibHtml(){
   const W=weights(), nL=predLoad().length;
   const rows=SRC.map(s=>{
-    const x=W[s], hs=HOR.map(hz=>{const d=(x.h&&x.h[hz])||{n:0,hit:0}; return d.n?`${hz}g ${nfP.format(d.hit/d.n*100)}% su ${d.n}`:`${hz}g nessun esito`;}).join(', ');
+    const x=W[s], hs=HOR.map(hz=>{const d=(x.h&&x.h[hz])||{n:0,exp:0,hit:0}; return d.exp?`${hz}g ${nfP.format(d.hit/d.exp*100)}% su ${d.exp} esposte`:`${hz}g nessuna esposizione`;}).join(', ');
     const fonte=x.nBt?`${x.nLive} da previsioni registrate, ${x.nBt} da ricalcolo storico`:`${x.nLive} esiti registrati`;
-    const aff=x.n?`${nfP.format(x.hit/x.n*100)}% di direzioni corrette su ${x.n} verifiche`:'nessuna verifica ancora';
+    const aff=x.exp?`${nfP.format(x.hit/x.exp*100)}% corrette quando prende posizione, su ${x.exp} volte`
+      :(x.n?`non ha mai preso posizione in ${x.n} verifiche`:'nessuna verifica ancora');
+    const espo=x.n?`Si espone nel ${nfP.format(x.rate*100)}% dei casi.`:'';
     return `<li><span class="lv">${esc(s)}</span> <span class="badge ${x.w>1.05?'up':x.w<0.95?'down':'m'}">peso ${nfP.format(x.w)}</span><br>
-      ${esc(aff)}<br><span class="s">${esc(fonte)}. ${esc(hs)}</span></li>`;
+      ${esc(aff)}<br><span class="s">${esc(espo)} ${esc(fonte)}. ${esc(hs)}</span></li>`;
   }).join('');
   const tot=SRC.reduce((a,s)=>a+W[s].n,0);
   return `<section><h2>Affidabilità delle previsioni</h2>
     <p class="intro">Ogni giorno l'app registra la direzione indicata da ciascuna fonte e la confronta con il prezzo reale dopo 3, 7 e 14 giorni. L'esito conta come direzione presa solo se il prezzo esce dalla banda di volatilità: dentro la banda il movimento non è significativo e vale come "neutro". La percentuale di successo determina il peso della fonte nel verdetto delle Previsioni.</p>
     <ul class="checks">${rows}</ul>
-    <p class="m small">${tot?`${tot} verifiche complessive, ${nL} previsioni registrate finora.`:'Nessuna verifica disponibile: servono prezzi storici e qualche giorno di previsioni registrate.'} Il peso parte da 1 e si sposta solo con i dati: con pochi casi resta vicino a 1, perché una serie fortunata non è una prova. Una fonte sotto la casualità viene ridotta di peso, mai invertita. Tecnica e Momentum includono il ricalcolo sui prezzi storici; notizie, social, video e clima di mercato partono da zero, perché quei dati passati non sono recuperabili.</p></section>`;
+    <p class="m small">${tot?`${tot} verifiche complessive, ${nL} previsioni registrate finora.`:'Nessuna verifica disponibile: servono prezzi storici e qualche giorno di previsioni registrate.'} L'accuratezza è calcolata solo sulle volte in cui la fonte prende posizione: un "neutro" non conta né come successo né come errore, altrimenti chi non si sbilancia mai sembrerebbe infallibile. Il peso parte da 1 e si sposta solo con i dati: con pochi casi resta vicino a 1, perché una serie fortunata non è una prova. Una fonte sotto la casualità viene ridotta di peso, mai invertita. Tecnica e Momentum includono il ricalcolo sui prezzi storici; notizie, social, video e clima di mercato partono da zero, perché quei dati passati non sono recuperabili.</p></section>`;
 }
 
 /* ---------- navigazione (hash: funziona anche il tasto indietro di Android) ---------- */
