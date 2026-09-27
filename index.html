@@ -1718,7 +1718,7 @@ function renderLedger(noKick){
     chart='<div id="ledChart" class="chart" style="height:220px"></div>';
   }else if(S) chart='<p class="empty">Servono almeno due giorni di storico.</p>';
   /* operazioni con totali progressivi */
-  const ev=allEvents(); const rows=[]; let inv=0, inc=0, real=0, fee=0; const qq={}, cc={};
+  const ev=allEvents(); const rows=[]; let inv=0, inc=0, real=0, fee=0, conv=0; const qq={}, cc={};
   ev.forEach(e=>{
     qq[e.id]=qq[e.id]||0; cc[e.id]=cc[e.id]||0;
     let extra='';
@@ -1728,10 +1728,10 @@ function renderLedger(noKick){
       const r=take*(e.p||0)-(e.f||0)-take*avg;
       cc[e.id]-=take*avg; qq[e.id]-=take; fee+=e.f||0;
       if(e.kind==='sell'){inc+=e.q*e.p-(e.f||0); real+=r; extra=`venduti ${qf(e.q)} ${esc(e.S)} a ${eur(e.p)}, incasso netto ${eur(e.q*e.p-(e.f||0))}, risultato <span class="${cls(r)}">${eurS(r)}</span>`;}
-      else if(e.kind==='conv'){real+=r; extra=`convertiti ${qf(e.q)} ${esc(e.S)}, controvalore ${eur(e.q*e.p)}, risultato <span class="${cls(r)}">${eurS(r)}</span>`;}
+      else if(e.kind==='conv'){real+=r; conv+=e.q*e.p; extra=`convertiti ${qf(e.q)} ${esc(e.S)}, controvalore ${eur(e.q*e.p)}, risultato <span class="${cls(r)}">${eurS(r)}</span>`;}
       else{real+=r; extra=`usciti ${qf(e.q)} ${esc(e.S)} senza incasso, costo <span class="${cls(r)}">${eurS(r)}</span>`;}
     }
-    rows.push(`<li><span>${esc(dIt(e.d))}: ${extra}<br><span class="s">Dopo: ${qf(qq[e.id])} ${esc(e.S)}, investito totale ${eur(inv)}${real!==0?`, realizzato ${eurS(real)}`:''}</span></span></li>`);
+    rows.push(`<li><span>${esc(dIt(e.d))}: ${extra}<br><span class="s">Dopo: ${qf(qq[e.id])} ${esc(e.S)}, capitale esterno ${eur(inv-conv)}${real!==0?`, realizzato ${eurS(real)}`:''}</span></span></li>`);
   });
   /* riepilogo mensile */
   const mo={};
@@ -1740,11 +1740,11 @@ function renderLedger(noKick){
     const m=mo[k]||(mo[k]={inv:0,inc:0,tok:{}});
     m.tok[e.S]=m.tok[e.S]||0;
     if(e.kind==='buy'){m.inv+=e.q*e.u; m.tok[e.S]+=e.q;}
-    else{if(e.kind==='sell') m.inc+=e.q*e.p-(e.f||0); m.tok[e.S]-=e.q;}
+    else{if(e.kind==='sell') m.inc+=e.q*e.p-(e.f||0); if(e.kind==='conv') m.conv=(m.conv||0)+e.q*e.p; m.tok[e.S]-=e.q;}
   });
   const mesi=Object.keys(mo).sort().reverse().map(k=>{
     const m=mo[k], t=Object.entries(m.tok).map(([s,v])=>`${v>=0?'+':''}${qf(v)} ${esc(s)}`).join(', ');
-    return `<li><span class="lv">${esc(k)}</span><br>Investito ${eur(m.inv)}${m.inc?`, incassato ${eur(m.inc)}`:''}. Token: ${t}</li>`;
+    return `<li><span class="lv">${esc(k)}</span><br>Capitale esterno ${eur(m.inv-(m.conv||0))}${m.conv?`, più ${eur(m.conv)} movimentati in conversioni`:''}${m.inc?`, incassato ${eur(m.inc)}`:''}. Token: ${t}</li>`;
   }).join('');
   box.innerHTML=`<section><h2>Registro</h2>
     <p class="intro">Storico ricostruito dalle tue operazioni e dai prezzi di chiusura giornalieri di CoinGecko (massimo 365 giorni indietro). Il valore passato è un calcolo, non una registrazione: dipende dalle date che hai inserito.</p>
@@ -1756,7 +1756,8 @@ function renderLedger(noKick){
     <div class="bar"><span class="m small">${histBusy?'Ricostruzione in corso…':'Prezzi storici aggiornati ogni 24 ore'}</span><button class="link" id="ledRefresh" type="button">Ricalcola</button></div>
     </section>
     <section><h2>Operazioni (${ev.length})</h2>
-    <dl class="kv">${kv('Investito totale',eur(inv))}${kv('Incassato da vendite',eur(inc))}${kv('Risultato realizzato',eurS(real),cls(real))}${kv('Commissioni pagate',eur(fee))}</dl>
+    <dl class="kv">${kv('Capitale esterno investito',eur(inv-conv))}${kv('Movimentato in conversioni',eur(conv))}${kv('Incassato da vendite',eur(inc))}${kv('Risultato realizzato',eurS(real),cls(real))}${kv('Commissioni pagate',eur(fee))}</dl>
+    <p class="m small">Il capitale esterno è il denaro entrato davvero nel portafoglio: la somma degli acquisti meno il controvalore delle conversioni, che spostano valore tra token senza aggiungerne.</p>
     <ul class="lots" style="margin-top:14px">${rows.reverse().join('')}</ul></section>
     <section><h2>Riepilogo mensile</h2><ul class="checks">${mesi}</ul></section>
     ${calibHtml()}`;
