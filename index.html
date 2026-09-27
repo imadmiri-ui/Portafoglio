@@ -199,6 +199,7 @@ details.set label{display:block;margin-top:12px;font-size:14px}
       <h2>Token</h2>
       <div id="list" class="list"></div>
       <button id="add" class="primary" type="button">Aggiungi acquisto</button>
+      <button id="conv" class="ghost" type="button" style="width:100%;margin-top:10px">Registra conversione</button>
     </section>
     <footer>
       <div class="tools">
@@ -241,13 +242,44 @@ details.set label{display:block;margin-top:12px;font-size:14px}
         <label><input type="radio" name="cm" value="total"> Costo totale</label>
       </div>
     </fieldset>
-    <label><span id="costLbl">Prezzo per unità in euro</span><input id="cost" class="inp" inputmode="decimal" autocomplete="off" placeholder="Es. 142,30"></label>
+    <label><span id="costLbl">Prezzo per unità</span><span style="display:flex;gap:8px;margin-top:6px">
+      <input id="cost" class="inp" inputmode="decimal" autocomplete="off" placeholder="Es. 142,30" style="flex:1;margin-top:0">
+      <select id="bCur" class="inp" style="width:86px;margin-top:0"><option value="EUR">€</option><option value="USD">$</option></select></span></label>
+    <label id="bFxL" hidden>Cambio 1 $ in € (lascia vuoto per quello del giorno)<input id="bFx" class="inp" inputmode="decimal" autocomplete="off"></label>
     <label>Data di acquisto<input id="date" class="inp" type="date"></label>
     <div id="preview" class="preview"></div>
     <p id="formErr" class="err" role="alert"></p>
     <div class="actions">
       <button type="button" id="cancel" class="ghost">Annulla</button>
       <button type="button" id="saveLot" class="primary">Salva acquisto</button>
+    </div>
+  </div>
+</div>
+
+<div id="convSheet" class="sheet" hidden>
+  <div class="card" role="dialog" aria-modal="true" aria-labelledby="convTitle">
+    <h2 id="convTitle">Registra conversione</h2>
+    <p class="m small">Scambio diretto di un token con un altro, per esempio dentro la Tangem. La quantità esce dal token di partenza ed entra in quello di arrivo: non è capitale nuovo.</p>
+    <label>Token di partenza<select id="cFrom" class="inp"></select></label>
+    <label>Quantità ceduta<input id="cQtyA" class="inp" inputmode="decimal" autocomplete="off"></label>
+    <label>Token di arrivo<select id="cTo" class="inp"></select></label>
+    <div id="cNewWrap" hidden>
+      <label>Cerca il token<input id="cQ" class="inp" autocomplete="off" placeholder="Nome o simbolo, es. hyperliquid"></label>
+      <div id="cResults" class="results"></div>
+      <div id="cPicked" class="picked" hidden></div>
+    </div>
+    <label>Quantità ricevuta<input id="cQtyB" class="inp" inputmode="decimal" autocomplete="off"></label>
+    <label>Controvalore dello scambio<span style="display:flex;gap:8px;margin-top:6px">
+      <input id="cVal" class="inp" inputmode="decimal" autocomplete="off" style="flex:1;margin-top:0">
+      <select id="cCur" class="inp" style="width:86px;margin-top:0"><option value="EUR">€</option><option value="USD">$</option></select></span></label>
+    <label>Commissione, stessa valuta (facoltativa)<input id="cFee" class="inp" inputmode="decimal" autocomplete="off" placeholder="0"></label>
+    <label id="cFxL" hidden>Cambio 1 $ in € (lascia vuoto per quello del giorno)<input id="cFx" class="inp" inputmode="decimal" autocomplete="off"></label>
+    <label>Data<input id="cDate" class="inp" type="date"></label>
+    <div id="cPrev" class="preview"></div>
+    <p id="cErr" class="err" role="alert"></p>
+    <div class="actions">
+      <button type="button" id="cCancel" class="ghost">Annulla</button>
+      <button type="button" id="cSave" class="primary">Salva conversione</button>
     </div>
   </div>
 </div>
@@ -265,8 +297,11 @@ details.set label{display:block;margin-top:12px;font-size:14px}
     </fieldset>
     <label>Quantità<input id="sQty" class="inp" inputmode="decimal" autocomplete="off" placeholder="Es. 200,346"></label>
     <button type="button" class="link" id="sMax">Usa tutta la quantità</button>
-    <label id="sPriceL">Prezzo di vendita per unità in euro<input id="sPrice" class="inp" inputmode="decimal" autocomplete="off"></label>
-    <label id="sFeeL">Commissione pagata in euro (facoltativa)<input id="sFee" class="inp" inputmode="decimal" autocomplete="off" placeholder="0"></label>
+    <label id="sPriceL">Prezzo di vendita per unità<span style="display:flex;gap:8px;margin-top:6px">
+      <input id="sPrice" class="inp" inputmode="decimal" autocomplete="off" style="flex:1;margin-top:0">
+      <select id="sCur" class="inp" style="width:86px;margin-top:0"><option value="EUR">€</option><option value="USD">$</option></select></span></label>
+    <label id="sFeeL">Commissione pagata, stessa valuta (facoltativa)<input id="sFee" class="inp" inputmode="decimal" autocomplete="off" placeholder="0"></label>
+    <label id="sFxL" hidden>Cambio 1 $ in € (lascia vuoto per quello del giorno)<input id="sFx" class="inp" inputmode="decimal" autocomplete="off"></label>
     <label>Data<input id="sDate" class="inp" type="date"></label>
     <div id="sPrev" class="preview"></div>
     <p id="sErr" class="err" role="alert"></p>
@@ -332,6 +367,28 @@ function parseNum(s){
   else s=s.replace(',','.');
   if(!/^(\d+\.?\d*|\.\d+)$/.test(s)) return NaN;
   return parseFloat(s);
+}
+
+/* ---------- cambio dollaro/euro ----------
+   Tassi ufficiali BCE via Frankfurter, alla data dell'operazione (nei giorni di chiusura
+   usa l'ultimo disponibile). Se il servizio non risponde, si inserisce il cambio a mano. */
+const fxMem={};
+async function fxRate(date){
+  const d=/^\d{4}-\d{2}-\d{2}$/.test(date||'')?date:localDate();
+  if(ok(fxMem[d])) return fxMem[d];
+  try{const o=JSON.parse(localStorage.getItem(KEY+'-fx-'+d)||'null'); if(o&&ok(o.r)){fxMem[d]=o.r; return o.r;}}catch(e){}
+  const j=await getJSON(`https://api.frankfurter.app/${d}?from=USD&to=EUR`);
+  const r=j&&j.rates&&j.rates.EUR;
+  if(!ok(r)||!(r>0)) throw new Error('cambio non disponibile');
+  fxMem[d]=r; try{localStorage.setItem(KEY+'-fx-'+d,JSON.stringify({r}));}catch(e){}
+  return r;
+}
+/* Converte in euro: valuta EUR resta tale, USD usa il cambio manuale se indicato. */
+async function toEur(v,cur,date,manual){
+  if(cur!=='USD') return {v,rate:1};
+  if(ok(manual)&&manual>0) return {v:v*manual,rate:manual,man:true};
+  const r=await fxRate(date);
+  return {v:v*r,rate:r};
 }
 
 /* ---------- memoria locale ---------- */
@@ -576,9 +633,10 @@ function renderDetail(){
       }).join('')}
     </ul>
     <button class="primary" id="addHere" type="button">Aggiungi acquisto di ${esc(h.name)}</button>
-    <button class="ghost" id="sellHere" type="button" style="width:100%;margin-top:10px">Registra vendita o uscita</button></section>
+    <button class="ghost" id="sellHere" type="button" style="width:100%;margin-top:10px">Registra vendita o uscita</button>
+    <button class="ghost" id="convHere" type="button" style="width:100%;margin-top:10px">Registra conversione</button></section>
     ${sales.length?`<section><h2>Vendite e uscite (${sales.length})</h2><ul class="lots">
-      ${sales.map(x=>`<li><span>${dIt(x.date)}: ${x.kind==='out'?'usciti':'venduti'} ${qf(x.qty)}${x.kind==='out'?'':' a '+eur(x.price)}<br><span class="s">${x.kind==='out'?'Senza incasso':`Incasso ${eur(x.qty*x.price)}${x.fee?`, commissione ${eur(x.fee)}`:''}`}</span></span>
+      ${sales.map(x=>`<li><span>${dIt(x.date)}: ${x.kind==='out'?'usciti':x.kind==='conv'?'convertiti':'venduti'} ${qf(x.qty)}${x.kind==='out'?'':' a '+eur(x.price)}<br><span class="s">${x.kind==='out'?'Senza incasso':x.kind==='conv'?`Controvalore ${eur(x.qty*x.price)}${x.to&&state.holdings[x.to]?', in '+esc(sym(state.holdings[x.to])):''}`:`Incasso ${eur(x.qty*x.price)}${x.fee?`, commissione ${eur(x.fee)}`:''}`}</span></span>
         <button class="del" type="button" data-sale="${esc(x.id)}">Elimina</button></li>`).join('')}
     </ul></section>`:''}
     <button class="danger" id="rm" type="button">Rimuovi ${esc(h.name)} dal portafoglio</button>
@@ -588,6 +646,7 @@ function renderDetail(){
   document.querySelectorAll('#dInfo [data-edit]').forEach(b=>b.onclick=()=>{const l=h.lots.find(x=>x.id===b.dataset.edit); if(l) openSheet({id:h.id,name:h.name,symbol:h.symbol,thumb:h.thumb},l);});
   $('#addHere').onclick=()=>openSheet({id:h.id,name:h.name,symbol:h.symbol,thumb:h.thumb});
   $('#sellHere').onclick=()=>openSell(id);
+  $('#convHere').onclick=()=>openConv(id);
   $('#rm').onclick=()=>{
     if(!confirm(`Rimuovere ${h.name} e tutti i suoi ${h.lots.length} acquisti?`)) return;
     delete state.holdings[id]; save(); location.replace('#/');
@@ -1475,7 +1534,7 @@ function allEvents(){
   for(const id of Object.keys(state.holdings)){
     const h=state.holdings[id];
     h.lots.forEach((l,i)=>ev.push({id,S:sym(h),name:h.name,kind:'buy',d:l.date||'',q:l.qty,u:l.unit,i}));
-    (h.sales||[]).forEach((x,i)=>ev.push({id,S:sym(h),name:h.name,kind:x.kind==='out'?'out':'sell',d:x.date||'',q:x.qty,p:x.price||0,f:x.fee||0,i}));
+    (h.sales||[]).forEach((x,i)=>ev.push({id,S:sym(h),name:h.name,kind:x.kind==='out'?'out':x.kind==='conv'?'conv':'sell',d:x.date||'',q:x.qty,p:x.price||0,f:x.fee||0,i}));
   }
   ev.sort((a,b)=>a.d.localeCompare(b.d)||(a.kind==='buy'?-1:1)||(a.i-b.i));
   return ev;
@@ -1585,6 +1644,7 @@ function renderLedger(noKick){
       const r=take*(e.p||0)-(e.f||0)-take*avg;
       cc[e.id]-=take*avg; qq[e.id]-=take; fee+=e.f||0;
       if(e.kind==='sell'){inc+=e.q*e.p-(e.f||0); real+=r; extra=`venduti ${qf(e.q)} ${esc(e.S)} a ${eur(e.p)}, incasso netto ${eur(e.q*e.p-(e.f||0))}, risultato <span class="${cls(r)}">${eurS(r)}</span>`;}
+      else if(e.kind==='conv'){real+=r; extra=`convertiti ${qf(e.q)} ${esc(e.S)}, controvalore ${eur(e.q*e.p)}, risultato <span class="${cls(r)}">${eurS(r)}</span>`;}
       else{real+=r; extra=`usciti ${qf(e.q)} ${esc(e.S)} senza incasso, costo <span class="${cls(r)}">${eurS(r)}</span>`;}
     }
     rows.push(`<li><span>${esc(dIt(e.d))}: ${extra}<br><span class="s">Dopo: ${qf(qq[e.id])} ${esc(e.S)}, investito totale ${eur(inv)}${real!==0?`, realizzato ${eurS(real)}`:''}</span></span></li>`);
@@ -1705,22 +1765,35 @@ $('#q').addEventListener('input',()=>{
 });
 const mode=()=>document.querySelector('input[name=cm]:checked').value;
 function updPreview(){
-  $('#costLbl').textContent=mode()==='unit'?'Prezzo per unità in euro':'Costo totale in euro';
+  const cu=$('#bCur').value; $('#bFxL').hidden=cu!=='USD';
+  $('#costLbl').textContent=mode()==='unit'?'Prezzo per unità':'Costo totale';
   const q=parseNum($('#qty').value), c=parseNum($('#cost').value), pv=$('#preview');
   if(!(q>0)||!(c>=0)){pv.textContent=''; return;}
   const unit=mode()==='unit'?c:c/q, total=mode()==='unit'?c*q:c;
+  if($('#bCur').value==='USD'){
+    const man=parseNum($('#bFx').value);
+    pv.textContent=`Letto come: ${qf(q)} unità, ${nfP.format(unit)} $ per unità, totale ${nfP.format(total)} $. Convertito in euro al salvataggio.`;
+    if(ok(man)&&man>0) pv.textContent+=` Cambio indicato: 1 $ = ${nfP.format(man)} €.`;
+    return;
+  }
   pv.textContent=`Letto come: ${qf(q)} unità, ${eur(unit)} per unità, costo totale ${eur(total)}`;
 }
-['#qty','#cost'].forEach(s=>$(s).addEventListener('input',updPreview));
+['#qty','#cost','#bFx'].forEach(s=>$(s).addEventListener('input',updPreview));
+$('#bCur').addEventListener('change',updPreview);
 document.querySelectorAll('input[name=cm]').forEach(r=>r.addEventListener('change',updPreview));
-function saveLot(){
+async function saveLot(){
   const err=$('#formErr');
   if(!picked){err.textContent='Scegli il token dalla lista dei risultati.'; return;}
   const qty=parseNum($('#qty').value);
   if(!(qty>0)){err.textContent='Inserisci una quantità maggiore di zero.'; return;}
   const c=parseNum($('#cost').value);
   if(!(c>=0)){err.textContent='Inserisci il costo di entrata (0 è ammesso, ad esempio per un airdrop).'; return;}
-  const unit=mode()==='unit'?c:c/qty;
+  let unit=mode()==='unit'?c:c/qty;
+  const bd=$('#date').value||localDate();
+  if($('#bCur').value==='USD'){
+    try{const r=await toEur(unit,'USD',bd,parseNum($('#bFx').value)); unit=r.v;}
+    catch(e){err.textContent='Cambio dollaro non recuperabile ('+e.message+'). Inserisci il cambio a mano.'; $('#bFxL').hidden=false; return;}
+  }
   if(editLot){
     const hh=state.holdings[picked.id], l=hh&&hh.lots.find(x=>x.id===editLot);
     if(!l){err.textContent='Acquisto non trovato.'; return;}
@@ -1740,10 +1813,11 @@ function saveLot(){
   closeSheet(); lastChart=null; render(); refreshMarket();
 }
 $('#add').onclick=()=>openSheet(null);
+$('#conv').onclick=()=>openConv(null);
 $('#cancel').onclick=closeSheet;
 $('#saveLot').onclick=saveLot;
 $('#sheet').addEventListener('click',e=>{if(e.target.id==='sheet') closeSheet();});
-document.addEventListener('keydown',e=>{if(e.key!=='Escape') return; if(!$('#sheet').hidden) closeSheet(); if(!$('#sellSheet').hidden) closeSell();});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape') return; if(!$('#sheet').hidden) closeSheet(); if(!$('#sellSheet').hidden) closeSell(); if(!$('#convSheet').hidden) closeConv();});
 
 /* ---------- vendite e uscite ---------- */
 let sellId=null;
@@ -1759,20 +1833,25 @@ function openSell(id){
 function closeSell(){$('#sellSheet').hidden=true; sellId=null;}
 function updSell(){
   const sell=sKind()==='sell'; $('#sPriceL').hidden=!sell; $('#sFeeL').hidden=!sell;
+  const usd=$('#sCur').value==='USD'; $('#sFxL').hidden=!sell||!usd;
   const pv=$('#sPrev'); if(!sellId||!state.holdings[sellId]){pv.textContent=''; return;}
   const s=stats(sellId), q=parseNum($('#sQty').value);
   if(!(q>0)){pv.textContent=''; return;}
   let t=`Restano ${qf(Math.max(0,s.qty-q))} ${sym(s.h)}.`;
   const p=parseNum($('#sPrice').value), fr=$('#sFee').value.trim(), f=fr?parseNum(fr):0;
-  if(sell&&p>0&&f>=0) t+=` Incasso netto ${eur(q*p-f)}; risultato rispetto al tuo prezzo medio ${eurS(q*p-f-q*s.avg)}.`;
+  if(sell&&p>0&&f>=0){
+    if(usd) t+=` Incasso netto ${nfP.format(q*p-f)} $, convertito in euro al salvataggio.`;
+    else t+=` Incasso netto ${eur(q*p-f)}; risultato rispetto al tuo prezzo medio ${eurS(q*p-f-q*s.avg)}.`;
+  }
   pv.textContent=t;
 }
-['#sQty','#sPrice','#sFee'].forEach(x=>$(x).addEventListener('input',updSell));
+['#sQty','#sPrice','#sFee','#sFx'].forEach(x=>$(x).addEventListener('input',updSell));
+$('#sCur').addEventListener('change',updSell);
 document.querySelectorAll('input[name=sk]').forEach(r=>r.addEventListener('change',updSell));
 $('#sMax').onclick=()=>{if(!sellId) return; $('#sQty').value=String(stats(sellId).qty).replace('.',','); updSell();};
 $('#sCancel').onclick=closeSell;
 $('#sellSheet').addEventListener('click',e=>{if(e.target.id==='sellSheet') closeSell();});
-$('#sSave').onclick=()=>{
+$('#sSave').onclick=async()=>{
   const err=$('#sErr'), id=sellId, h=state.holdings[id]; if(!h) return;
   const s=stats(id), sell=sKind()==='sell', q=parseNum($('#sQty').value);
   if(!(q>0)){err.textContent='Inserisci una quantità maggiore di zero.'; return;}
@@ -1781,11 +1860,121 @@ $('#sSave').onclick=()=>{
   if(sell){
     price=parseNum($('#sPrice').value); if(!(price>0)){err.textContent='Inserisci il prezzo di vendita per unità.'; return;}
     const fr=$('#sFee').value.trim(); fee=fr?parseNum(fr):0; if(!(fee>=0)){err.textContent='Commissione non valida.'; return;}
+    if($('#sCur').value==='USD'){
+      try{const d=$('#sDate').value||localDate(), rp=await toEur(price,'USD',d,parseNum($('#sFx').value)), rf=await toEur(fee,'USD',d,parseNum($('#sFx').value)); price=rp.v; fee=rf.v;}
+      catch(e){err.textContent='Cambio dollaro non recuperabile ('+e.message+'). Inserisci il cambio a mano.'; $('#sFxL').hidden=false; return;}
+    }
   }
   if(!Array.isArray(h.sales)) h.sales=[];
   h.sales.push({id:uid(),kind:sell?'sell':'out',qty:Math.min(q,s.qty),price,fee,date:$('#sDate').value||null});
   if(!save()){h.sales.pop(); err.textContent='Salvataggio non riuscito: la memoria del browser non è disponibile.'; return;}
   closeSell(); lastChart=null; render();
+};
+
+/* ---------- conversioni tra token ----------
+   Una conversione è una vendita del token di partenza e un acquisto del token di arrivo,
+   allo stesso controvalore: nessun capitale nuovo entra nel portafoglio. */
+let convPick=null, convT=null, convSeq=0;
+function openConv(fromId){
+  const ids=Object.keys(state.holdings);
+  if(!ids.length){alert('Aggiungi prima almeno un token.'); return;}
+  convPick=null;
+  const opt=id=>`<option value="${esc(id)}">${esc(state.holdings[id].name)} (${esc(sym(state.holdings[id]))})</option>`;
+  $('#cFrom').innerHTML=ids.map(opt).join('');
+  $('#cTo').innerHTML=ids.map(opt).join('')+'<option value="__new">Altro token…</option>';
+  if(fromId&&state.holdings[fromId]) $('#cFrom').value=fromId;
+  $('#cTo').value=ids.find(x=>x!==$('#cFrom').value)||'__new';
+  ['#cQtyA','#cQtyB','#cVal','#cFee','#cFx','#cQ'].forEach(s=>{$(s).value='';});
+  $('#cResults').innerHTML=''; $('#cPicked').hidden=true; $('#cCur').value='EUR';
+  $('#cDate').value=localDate(); $('#cErr').textContent='';
+  updConv(); $('#convSheet').hidden=false; setTimeout(()=>$('#cQtyA').focus(),50);
+}
+function closeConv(){$('#convSheet').hidden=true; clearTimeout(convT); convSeq++;}
+function updConv(){
+  const isNew=$('#cTo').value==='__new';
+  $('#cNewWrap').hidden=!isNew;
+  $('#cFxL').hidden=$('#cCur').value!=='USD';
+  const from=$('#cFrom').value, s=state.holdings[from]?stats(from):null;
+  const qa=parseNum($('#cQtyA').value), qb=parseNum($('#cQtyB').value), v=parseNum($('#cVal').value);
+  const pv=$('#cPrev');
+  if(!s||!(qa>0)){pv.textContent=''; return;}
+  let t=`Disponibili ${qf(s.qty)} ${sym(s.h)}; dopo la conversione ${qf(Math.max(0,s.qty-qa))}.`;
+  if(v>0&&qa>0){
+    const cur=$('#cCur').value==='USD'?'$':'€';
+    t+=` Valore ceduto ${nfP.format(v/qa)} ${cur} per ${esc(sym(s.h))}`;
+    if(qb>0) t+=`, ricevuto ${nfP.format(v/qb)} ${cur} per unità`;
+    t+='.';
+    if($('#cCur').value==='EUR') t+=` Risultato sul tuo prezzo medio: ${eurS(v-qa*s.avg)}.`;
+  }
+  pv.textContent=t;
+}
+['#cQtyA','#cQtyB','#cVal','#cFee','#cFx'].forEach(s=>$(s).addEventListener('input',updConv));
+['#cFrom','#cTo','#cCur'].forEach(s=>$(s).addEventListener('change',updConv));
+$('#cQ').addEventListener('input',()=>{
+  clearTimeout(convT); const v=$('#cQ').value.trim();
+  if(v.length<2){convSeq++; $('#cResults').innerHTML=''; return;}
+  convT=setTimeout(async()=>{
+    const seq=++convSeq, box=$('#cResults');
+    box.innerHTML='<p class="m small">Ricerca…</p>';
+    try{
+      const d=await getJSON(`${API}/search?query=${encodeURIComponent(v)}`);
+      if(seq!==convSeq) return;
+      const coins=(d&&Array.isArray(d.coins)?d.coins:[]).slice(0,8);
+      if(!coins.length){box.innerHTML='<p class="m small">Nessun token trovato.</p>'; return;}
+      box.innerHTML='';
+      coins.forEach(c=>{
+        const b=document.createElement('button'); b.type='button'; b.className='res';
+        const img=safeImg(c.thumb);
+        b.innerHTML=`${img?`<img src="${esc(img)}" alt="">`:'<span></span>'}<span><span class="n">${esc(c.name)}</span> <span class="s">${esc(String(c.symbol||'').toUpperCase())}</span><br><span class="s">${esc(c.id)}</span></span>`;
+        b.onclick=()=>{
+          convPick={id:c.id,name:c.name,symbol:c.symbol,thumb:safeImg(c.thumb)};
+          $('#cResults').innerHTML='';
+          const p=$('#cPicked'); p.hidden=false;
+          p.innerHTML=`${convPick.thumb?`<img src="${esc(convPick.thumb)}" alt="">`:''}<div class="grow"><span class="n">${esc(convPick.name)}</span> <span class="s">${esc(String(convPick.symbol).toUpperCase())}</span></div>`;
+          $('#cQtyB').focus();
+        };
+        box.append(b);
+      });
+    }catch(e){ if(seq===convSeq) box.innerHTML=`<p class="err">Ricerca non riuscita (${esc(e.message)}).</p>`; }
+  },450);
+});
+$('#cCancel').onclick=closeConv;
+$('#convSheet').addEventListener('click',e=>{if(e.target.id==='convSheet') closeConv();});
+$('#cSave').onclick=async()=>{
+  const err=$('#cErr'), fromId=$('#cFrom').value, hA=state.holdings[fromId];
+  if(!hA){err.textContent='Scegli il token di partenza.'; return;}
+  const toSel=$('#cTo').value;
+  let toId, meta;
+  if(toSel==='__new'){
+    if(!convPick){err.textContent='Cerca e scegli il token di arrivo.'; return;}
+    toId=convPick.id; meta=convPick;
+  }else{
+    if(toSel===fromId){err.textContent='Il token di arrivo deve essere diverso da quello di partenza.'; return;}
+    toId=toSel; meta=state.holdings[toId];
+  }
+  const s=stats(fromId), qa=parseNum($('#cQtyA').value), qb=parseNum($('#cQtyB').value);
+  let v=parseNum($('#cVal').value), fee=$('#cFee').value.trim()?parseNum($('#cFee').value):0;
+  if(!(qa>0)){err.textContent='Inserisci la quantità ceduta.'; return;}
+  if(qa>s.qty*(1+1e-9)){err.textContent=`Quantità superiore a quella disponibile (${qf(s.qty)}).`; return;}
+  if(!(qb>0)){err.textContent='Inserisci la quantità ricevuta.'; return;}
+  if(!(v>0)){err.textContent='Inserisci il controvalore dello scambio.'; return;}
+  if(!(fee>=0)){err.textContent='Commissione non valida.'; return;}
+  const date=$('#cDate').value||localDate();
+  if($('#cCur').value==='USD'){
+    try{const rv=await toEur(v,'USD',date,parseNum($('#cFx').value)), rf=await toEur(fee,'USD',date,parseNum($('#cFx').value)); v=rv.v; fee=rf.v;}
+    catch(e){err.textContent='Cambio dollaro non recuperabile ('+e.message+'). Inserisci il cambio a mano.'; $('#cFxL').hidden=false; return;}
+  }
+  const hB=state.holdings[toId]||(state.holdings[toId]={id:toId,name:meta.name,symbol:meta.symbol,thumb:safeImg(meta.thumb),lots:[]});
+  const created=!hB.lots.length&&!(hB.sales&&hB.sales.length);
+  if(!Array.isArray(hA.sales)) hA.sales=[];
+  const rec={id:uid(),kind:'conv',qty:Math.min(qa,s.qty),price:v/qa,fee:0,date,to:toId};
+  const lot={id:uid(),qty:qb,unit:Math.max(0,v-fee)/qb,date,from:fromId};
+  hA.sales.push(rec); hB.lots.push(lot);
+  if(!save()){
+    hA.sales.pop(); hB.lots.pop(); if(created) delete state.holdings[toId];
+    err.textContent='Salvataggio non riuscito: la memoria del browser non è disponibile.'; return;
+  }
+  closeConv(); lastChart=null; render(); refreshMarket();
 };
 
 /* ---------- backup ---------- */
