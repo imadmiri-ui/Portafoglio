@@ -44,6 +44,7 @@ section{margin-top:26px}
 /* Saldo sempre visibile */
 .top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
 .top-in{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;padding-top:14px}
+.total.stale{color:var(--muted)}
 .total{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;font-weight:600;font-size:clamp(34px,10vw,52px);line-height:1;letter-spacing:-.01em}
 .top-side{text-align:right;font-size:13.5px;line-height:1.5}
 .partial{color:var(--warn);font-size:12.5px;margin-top:4px}
@@ -206,7 +207,7 @@ details.help p{font-size:13px;color:var(--muted);margin:10px 0 0}
 <header class="top">
   <div class="wrap top-in">
     <div>
-      <div class="m small">Saldo in tempo reale</div>
+      <div class="m small" id="balLbl">Saldo in tempo reale</div>
       <div id="total" class="total">€0,00</div>
       <div id="partial" class="partial" hidden></div>
     </div>
@@ -348,6 +349,9 @@ details.help p{font-size:13px;color:var(--muted);margin:10px 0 0}
 (function(){
 'use strict';
 const API='https://api.coingecko.com/api/v3';
+/* Senza chiave CoinGecko limita per indirizzo IP, condiviso su rete mobile: da lì 403 e 429.
+   La chiave Demo (gratuita) identifica il singolo utente e resta solo su questo telefono. */
+const cg=u=>u+(settings.cgKey?(u.includes('?')?'&':'?')+'x_cg_demo_api_key='+encodeURIComponent(settings.cgKey):'');
 const CCY='eur';
 const KEY='tangem-portfolio-v1';
 const REFRESH_MS=60000;
@@ -456,8 +460,40 @@ async function getJSON(url){
   }finally{clearTimeout(t);}
 }
 const staleNote=()=>lastOk?'. Ultimo prezzo valido: '+clock(lastOk):'';
+/* Prezzi di riserva da Binance: una richiesta per token, coppia in euro se esiste,
+   altrimenti in dollari convertita con EURUSDT. Nessuna verifica incrociata possibile
+   quando CoinGecko non risponde, quindi il dato va considerato indicativo. */
+async function bnTicker(p){
+  const d=await getJSON(`${BN}/ticker/24hr?symbol=${p}`);
+  const v=parseFloat(d&&d.lastPrice), c=parseFloat(d&&d.priceChangePercent);
+  if(!ok(v)||!(v>0)) throw new Error('prezzo non valido');
+  return {p:v,ch:ok(c)?c:null};
+}
+async function fallbackMarket(ids){
+  let fx=null; const m={}, mancanti=[];
+  for(const id of ids){
+    const h=state.holdings[id], sy=sym(h).replace(/[^A-Z0-9]/g,'');
+    if(!sy){mancanti.push(id); continue;}
+    try{
+      let r;
+      try{r=await bnTicker(sy+'EUR');}
+      catch(e){
+        const u=await bnTicker(sy+'USDT');
+        if(!fx) fx=await bnTicker('EURUSDT');
+        r={p:u.p/fx.p,ch:u.ch};
+      }
+      m[id]={id,current_price:r.p,price_change_percentage_24h:r.ch,
+        price_change_percentage_24h_in_currency:r.ch,image:h.thumb||'',_src:'binance'};
+    }catch(e){mancanti.push(id);}
+  }
+  return {m,mancanti};
+}
 function setStatus(kind,msg){$('#dot').className='dot '+kind; $('#status').textContent=msg;}
 
+let srcFallback=false;
+const msgRifiuto=c=>c===403
+  ? 'CoinGecko ha bloccato questo indirizzo IP (403). Succede sulle reti mobili, dove l’IP è condiviso: aggiungi la chiave Demo gratuita nelle Impostazioni.'
+  : 'Limite richieste CoinGecko raggiunto (429): senza chiave il limite è per indirizzo IP, condiviso con altri utenti della stessa rete.';
 async function refreshMarket(){
   const ids=Object.keys(state.holdings);
   if(!ids.length){setStatus('','Nessun token da aggiornare'); render(); return;}
@@ -468,7 +504,7 @@ async function refreshMarket(){
     const m={};
     for(let i=0;i<ids.length;i+=200){
       const chunk=ids.slice(i,i+200);
-      const rows=await getJSON(`${API}/coins/markets?vs_currency=${CCY}&ids=${encodeURIComponent(chunk.join(','))}&per_page=250&page=1&price_change_percentage=1h,24h,7d,30d,1y`);
+      const rows=await getJSON(cg(`${API}/coins/markets?vs_currency=${CCY}&ids=${encodeURIComponent(chunk.join(','))}&per_page=250&page=1&price_change_percentage=1h,24h,7d,30d,1y`));
       if(!Array.isArray(rows)) throw new Error('risposta inattesa');
       rows.forEach(r=>{if(r&&r.id) m[r.id]=r;});
     }
@@ -479,7 +515,21 @@ async function refreshMarket(){
     else setStatus('ok',`Aggiornato alle ${clock(lastOk)}`);
     saveSnap(totals().value);
   }catch(e){
-    if(e.code===429){backoffUntil=Date.now()+90000; setStatus('warn','Limite richieste CoinGecko raggiunto, nuovo tentativo tra 90 secondi'+staleNote());}
+    const rifiutato=e.code===429||e.code===403||e.code===1020;
+    if(rifiutato){
+      backoffUntil=Date.now()+(e.code===403?300000:90000);
+      try{
+        const F=await fallbackMarket(ids);
+        if(Object.keys(F.m).length){
+          market=F.m; lastOk=Date.now(); srcFallback=true;
+          try{localStorage.setItem(KEY+'-mkt',JSON.stringify({t:lastOk,m:market}));}catch(_){}
+          setStatus('warn',`Prezzi da Binance alle ${clock(lastOk)}: CoinGecko ha rifiutato la richiesta (${e.code})`
+            +(F.mancanti.length?`. Senza prezzo: ${F.mancanti.map(i=>sym(state.holdings[i])||i).join(', ')}`:'')
+            +(settings.cgKey?'':'. Aggiungi la chiave Demo CoinGecko nelle Impostazioni'));
+          saveSnap(totals().value);
+        }else setStatus('err',msgRifiuto(e.code)+staleNote());
+      }catch(_){setStatus('err',msgRifiuto(e.code)+staleNote());}
+    }
     else setStatus('err','Aggiornamento non riuscito ('+e.message+')'+staleNote());
   }finally{busy=false;}
   render();
@@ -533,8 +583,14 @@ function render(){
   else if(view.screen==='registro') renderLedger();
   else renderHome();
 }
+const STALE_MS=10*60*1000;
 function renderTop(){
   const t=totals();
+  /* Un saldo vecchio non deve somigliare a un saldo vivo: etichetta con l'ora e numero grigio. */
+  const vecchio=lastOk&&Date.now()-lastOk>STALE_MS;
+  $('#balLbl').textContent=vecchio?`Saldo alle ${clock(lastOk)}, non aggiornato`
+    :(srcFallback?'Saldo con prezzi Binance':'Saldo in tempo reale');
+  $('#total').className='total'+(vecchio?' stale':'');
   $('#total').textContent=eur(t.value);
   $('#pnl').innerHTML=t.n&&t.value>0?`<span class="${cls(t.pnl)}">${eurS(t.pnl)} (${pct(t.pnlPct)})</span> <span class="m">sul costo</span>`:'';
   $('#chg24').innerHTML=ok(t.ch24)?`<span class="${cls(t.ch24)}">${eurS(t.ch24)} (${pct(t.ch24Pct)})</span> <span class="m">24h</span>`:'';
@@ -705,7 +761,7 @@ function delSale(id,saleId){
 async function loadChart(id,days){
   const k=id+'|'+days, c=chartCache[k];
   if(c&&Date.now()-c.t<CHART_TTL) return c.data;
-  const d=await getJSON(`${API}/coins/${encodeURIComponent(id)}/market_chart?vs_currency=${CCY}&days=${days}`);
+  const d=await getJSON(cg(`${API}/coins/${encodeURIComponent(id)}/market_chart?vs_currency=${CCY}&days=${days}`));
   const pts=(d&&Array.isArray(d.prices)?d.prices:[]).filter(p=>Array.isArray(p)&&ok(p[0])&&ok(p[1]));
   chartCache[k]={t:Date.now(),data:pts};
   return pts;
@@ -1083,7 +1139,7 @@ async function runForecast(force){
       if(c&&!c.err&&!force&&Date.now()-c.t<TA_TTL) continue;
       if(Date.now()<backoffUntil) break;
       try{
-        const d=await getJSON(`${API}/coins/${encodeURIComponent(id)}/market_chart?vs_currency=${CCY}&days=90&interval=daily`);
+        const d=await getJSON(cg(`${API}/coins/${encodeURIComponent(id)}/market_chart?vs_currency=${CCY}&days=90&interval=daily`));
         const closes=(d&&Array.isArray(d.prices)?d.prices:[]).map(p=>p&&p[1]).filter(ok);
         ta[id]={t:Date.now(),closes};
         try{localStorage.setItem(KEY+'-ta-'+id,JSON.stringify(ta[id]));}catch(e){}
@@ -1455,7 +1511,7 @@ function renderNews(noKick){
 }
 
 /* ---------- impostazioni costi e fonti ---------- */
-let settings={fee:null,budget:null,ytKey:'',tok:{},tzOff:null};
+let settings={fee:null,budget:null,ytKey:'',cgKey:'',tok:{},tzOff:null};
 let setOpen=null;
 function loadSettings(){
   try{const o=JSON.parse(localStorage.getItem(KEY+'-settings')||'null'); if(o&&typeof o==='object') settings=Object.assign(settings,o);}catch(e){}
@@ -1481,6 +1537,8 @@ function settingsHtml(){
       <select class="inp" id="tzSel">${[['','Automatico (browser)'],['0','GMT, UTC+0'],['60','UTC+1'],['120','UTC+2'],['-60','UTC-1']].map(([v,l])=>`<option value="${v}"${String(tzOff==null?'':tzOff)===v?' selected':''}>${l}</option>`).join('')}</select>
     </label>
     <p class="m small">Il browser dichiara ${esc((Intl.DateTimeFormat().resolvedOptions().timeZone)||'fuso sconosciuto')} e segna le ${esc(new Date().toLocaleTimeString('it-IT'))}. Se non coincide con l’orologio del telefono, scegli qui lo scostamento giusto: l’app calcolerà l’ora da sé.</p>
+    <label>Chiave Demo CoinGecko (consigliata)<input class="inp" data-set="cgKey" type="password" autocomplete="off" value="${esc(settings.cgKey||'')}"></label>
+    <p class="m small">Gratuita da coingecko.com, sezione API, piano Demo. Senza chiave il limite di richieste è legato all’indirizzo IP, condiviso su rete mobile: da lì gli errori 403 e 429. Resta su questo telefono e non entra nei backup.</p>
     <label>Chiave API YouTube (facoltativa)<input class="inp" data-set="ytKey" type="password" autocomplete="off" value="${esc(settings.ytKey||'')}"></label>
     <p class="m small">La chiave YouTube (YouTube Data API v3) si crea gratis da Google Cloud Console. Resta solo su questo telefono e non entra nei backup.</p>
   </details>`;
@@ -1496,6 +1554,12 @@ function bindSettings(){
   const d=$('#setBox'); if(!d) return;
   d.addEventListener('toggle',()=>{setOpen=d.open;});
   d.querySelectorAll('input').forEach(inp=>inp.addEventListener('change',()=>{
+    if(inp.dataset.set==='cgKey'){
+      settings.cgKey=inp.value.trim(); saveSettings();
+      backoffUntil=0; srcFallback=false; market={}; lastOk=0;
+      Object.keys(chartCache).forEach(k=>delete chartCache[k]);
+      refreshMarket(); return;
+    }
     if(inp.dataset.set==='ytKey'){settings.ytKey=inp.value.trim(); Object.keys(sig).forEach(k=>delete sig[k]); saveSettings(); renderTips(true); runSignals(false); return;}
     const raw=inp.value.trim(), v=raw===''?null:parseNum(raw);
     if(v!==null&&!(v>=0)){inp.setCustomValidity('Numero non valido'); inp.reportValidity(); return;}
@@ -1635,7 +1699,7 @@ async function runHist(force){
       if(c&&!c.err&&!force&&Date.now()-c.t<HIST_TTL) continue;
       if(Date.now()<backoffUntil) break;
       try{
-        const d=await getJSON(`${API}/coins/${encodeURIComponent(id)}/market_chart?vs_currency=${CCY}&days=365&interval=daily`);
+        const d=await getJSON(cg(`${API}/coins/${encodeURIComponent(id)}/market_chart?vs_currency=${CCY}&days=365&interval=daily`));
         const pts=(d&&Array.isArray(d.prices)?d.prices:[]).filter(p=>Array.isArray(p)&&ok(p[0])&&ok(p[1]));
         hist[id]={t:Date.now(),d:pts.map(p=>[dayKey(p[0]),p[1]])};
         try{localStorage.setItem(KEY+'-hist-'+id,JSON.stringify(hist[id]));}catch(e){}
@@ -1908,7 +1972,7 @@ async function doSearch(v){
   const seq=++searchSeq, box=$('#results');
   box.innerHTML='<p class="m small">Ricerca…</p>';
   try{
-    const d=await getJSON(`${API}/search?query=${encodeURIComponent(v)}`);
+    const d=await getJSON(cg(`${API}/search?query=${encodeURIComponent(v)}`));
     if(seq!==searchSeq) return;
     const coins=(d&&Array.isArray(d.coins)?d.coins:[]).slice(0,8);
     if(!coins.length){box.innerHTML='<p class="m small">Nessun token trovato su CoinGecko con questo nome.</p>'; return;}
@@ -2084,7 +2148,7 @@ $('#cQ').addEventListener('input',()=>{
     const seq=++convSeq, box=$('#cResults');
     box.innerHTML='<p class="m small">Ricerca…</p>';
     try{
-      const d=await getJSON(`${API}/search?query=${encodeURIComponent(v)}`);
+      const d=await getJSON(cg(`${API}/search?query=${encodeURIComponent(v)}`));
       if(seq!==convSeq) return;
       const coins=(d&&Array.isArray(d.coins)?d.coins:[]).slice(0,8);
       if(!coins.length){box.innerHTML='<p class="m small">Nessun token trovato.</p>'; return;}
@@ -2175,6 +2239,7 @@ $('#refresh').onclick=()=>refreshMarket();
 let rsT; window.addEventListener('resize',()=>{clearTimeout(rsT); rsT=setTimeout(fitChart,150);});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()-lastOk>REFRESH_MS/2) refreshMarket();});
 setInterval(()=>{if(!document.hidden) refreshMarket();},REFRESH_MS);
+setInterval(()=>{if(!document.hidden) renderTop();},60000);
 
 load();
 loadSettings();
