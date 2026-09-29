@@ -470,14 +470,21 @@ async function bnTicker(p){
   return {p:v,ch:ok(c)?c:null};
 }
 async function fallbackMarket(ids){
+  /* Elenco coppie reali (1 richiesta, cache 1h): evita di chiedere coppie inesistenti.
+     Se l'elenco non arriva si procede per tentativi come prima. */
+  let M=null; try{M=await bnAll();}catch(_){}
   let fx=null; const m={}, mancanti=[];
   for(const id of ids){
     const h=state.holdings[id], sy=sym(h).replace(/[^A-Z0-9]/g,'');
-    if(!sy){mancanti.push(id); continue;}
+    /* Coppia gia' esaminata con il controllo ±5% su CoinGecko: se risultava assente
+       o di un altro progetto, niente prezzo invece di un prezzo sbagliato. */
+    let vp=pairCache[id];
+    if(!vp){try{vp=JSON.parse(localStorage.getItem(KEY+'-pair-'+id)||'null');}catch(_){vp=null;}}
+    if(!sy||(vp&&vp.none)||(M&&!M[sy+'EUR']&&!M[sy+'USDT'])){mancanti.push(id); continue;}
     try{
-      let r;
-      try{r=await bnTicker(sy+'EUR');}
-      catch(e){
+      let r=null;
+      if(!M||M[sy+'EUR']){try{r=await bnTicker(sy+'EUR');}catch(_){r=null;}}
+      if(!r){
         const u=await bnTicker(sy+'USDT');
         if(!fx) fx=await bnTicker('EURUSDT');
         r={p:u.p/fx.p,ch:u.ch};
@@ -494,45 +501,66 @@ let srcFallback=false;
 const msgRifiuto=c=>c===403
   ? 'CoinGecko ha bloccato questo indirizzo IP (403). Succede sulle reti mobili, dove l’IP è condiviso: aggiungi la chiave Demo gratuita nelle Impostazioni.'
   : 'Limite richieste CoinGecko raggiunto (429): senza chiave il limite è per indirizzo IP, condiviso con altri utenti della stessa rete.';
+async function viaBinance(ids,motivo){
+  const F=await fallbackMarket(ids);
+  if(!Object.keys(F.m).length) return false;
+  market=F.m; lastOk=Date.now(); srcFallback=true;
+  try{localStorage.setItem(KEY+'-mkt',JSON.stringify({t:lastOk,m:market}));}catch(_){}
+  setStatus('warn',`Prezzi da Binance alle ${clock(lastOk)}: ${motivo}`
+    +(F.mancanti.length?`. Senza prezzo: ${F.mancanti.map(i=>sym(state.holdings[i])||i).join(', ')}`:'')
+    +(settings.cgKey?'':'. Aggiungi la chiave Demo CoinGecko nelle Impostazioni'));
+  saveSnap(totals().value);
+  return true;
+}
 async function refreshMarket(){
   const ids=Object.keys(state.holdings);
   if(!ids.length){setStatus('','Nessun token da aggiornare'); render(); return;}
   if(busy) return;
-  if(Date.now()<backoffUntil){setStatus('warn','Limite richieste CoinGecko: attendo prima di riprovare'+staleNote()); return;}
-  busy=true; setStatus('load','Aggiornamento prezzi…');
+  busy=true;
   try{
-    const m={};
-    for(let i=0;i<ids.length;i+=200){
-      const chunk=ids.slice(i,i+200);
-      const rows=await getJSON(cg(`${API}/coins/markets?vs_currency=${CCY}&ids=${encodeURIComponent(chunk.join(','))}&per_page=250&page=1&price_change_percentage=1h,24h,7d,30d,1y`));
-      if(!Array.isArray(rows)) throw new Error('risposta inattesa');
-      rows.forEach(r=>{if(r&&r.id) m[r.id]=r;});
+    /* Durante la pausa CoinGecko i prezzi arrivano comunque da Binance. */
+    if(Date.now()<backoffUntil){
+      setStatus('load','Aggiornamento prezzi da Binance…');
+      let fatto=false; try{fatto=await viaBinance(ids,'CoinGecko in pausa dopo un rifiuto');}catch(_){}
+      if(!fatto) setStatus('warn','Limite richieste CoinGecko: attendo prima di riprovare'+staleNote());
+      return;
     }
-    market=m; lastOk=Date.now();
-    try{localStorage.setItem(KEY+'-mkt',JSON.stringify({t:lastOk,m}));}catch(e){}
-    const missing=ids.filter(id=>!m[id]);
-    if(missing.length) setStatus('warn',`Aggiornato alle ${clock(lastOk)}. Senza prezzo: ${missing.map(id=>sym(state.holdings[id])||id).join(', ')}`);
-    else setStatus('ok',`Aggiornato alle ${clock(lastOk)}`);
-    saveSnap(totals().value);
-  }catch(e){
-    const rifiutato=e.code===429||e.code===403||e.code===1020;
-    if(rifiutato){
-      backoffUntil=Date.now()+(e.code===403?300000:90000);
-      try{
-        const F=await fallbackMarket(ids);
-        if(Object.keys(F.m).length){
-          market=F.m; lastOk=Date.now(); srcFallback=true;
-          try{localStorage.setItem(KEY+'-mkt',JSON.stringify({t:lastOk,m:market}));}catch(_){}
-          setStatus('warn',`Prezzi da Binance alle ${clock(lastOk)}: CoinGecko ha rifiutato la richiesta (${e.code})`
-            +(F.mancanti.length?`. Senza prezzo: ${F.mancanti.map(i=>sym(state.holdings[i])||i).join(', ')}`:'')
-            +(settings.cgKey?'':'. Aggiungi la chiave Demo CoinGecko nelle Impostazioni'));
-          saveSnap(totals().value);
-        }else setStatus('err',msgRifiuto(e.code)+staleNote());
-      }catch(_){setStatus('err',msgRifiuto(e.code)+staleNote());}
+    setStatus('load','Aggiornamento prezzi…');
+    try{
+      const m={};
+      for(let i=0;i<ids.length;i+=200){
+        const chunk=ids.slice(i,i+200);
+        const rows=await getJSON(cg(`${API}/coins/markets?vs_currency=${CCY}&ids=${encodeURIComponent(chunk.join(','))}&per_page=250&page=1&price_change_percentage=1h,24h,7d,30d,1y`));
+        if(!Array.isArray(rows)) throw new Error('risposta inattesa');
+        rows.forEach(r=>{if(r&&r.id) m[r.id]=r;});
+      }
+      market=m; lastOk=Date.now(); srcFallback=false;
+      try{localStorage.setItem(KEY+'-mkt',JSON.stringify({t:lastOk,m}));}catch(e){}
+      const missing=ids.filter(id=>!m[id]);
+      if(missing.length) setStatus('warn',`Aggiornato alle ${clock(lastOk)}. Senza prezzo: ${missing.map(id=>sym(state.holdings[id])||id).join(', ')}`);
+      else setStatus('ok',`Aggiornato alle ${clock(lastOk)}`);
+      saveSnap(totals().value);
+    }catch(e){
+      const rifiutato=e.code===429||e.code===403||e.code===1020;
+      /* "Failed to fetch" = TypeError senza codice HTTP: rete assente oppure risposta senza
+         intestazioni CORS (il browser nasconde lo stato reale, anche un 403/429). */
+      const rete=!e.code&&e instanceof TypeError;
+      const timeout=e.code==='timeout';
+      if(rifiutato) backoffUntil=Date.now()+(e.code===403?300000:90000);
+      else if(rete) backoffUntil=Date.now()+90000;
+      if(rifiutato||rete||timeout){
+        const motivo=rifiutato?`CoinGecko ha rifiutato la richiesta (${e.code})`
+          :timeout?'CoinGecko non risponde (timeout)'
+          :'CoinGecko non raggiungibile (Failed to fetch)';
+        let fatto=false; try{fatto=await viaBinance(ids,motivo);}catch(_){}
+        if(!fatto) setStatus('err',
+          rifiutato?msgRifiuto(e.code)+staleNote()
+          :timeout?'Aggiornamento non riuscito: CoinGecko e Binance non rispondono'+staleNote()
+          :'Nessuna risposta né da CoinGecko né da Binance: connessione assente o richieste bloccate'+staleNote());
+      }
+      else setStatus('err','Aggiornamento non riuscito ('+e.message+')'+staleNote());
     }
-    else setStatus('err','Aggiornamento non riuscito ('+e.message+')'+staleNote());
-  }finally{busy=false;}
-  render();
+  }finally{busy=false; render();}
 }
 
 /* ---------- calcoli ---------- */
