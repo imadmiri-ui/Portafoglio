@@ -64,6 +64,11 @@ section{margin-top:26px}
 .list{border-top:1px solid var(--line)}
 .row{display:grid;grid-template-columns:34px 1fr auto;gap:12px;align-items:center;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:12px 2px}
 .row img,.ph{width:34px;height:34px;border-radius:50%;background:var(--soft);display:block}
+.tk{border-radius:50%;background:var(--soft);display:inline-block;flex:none;vertical-align:middle;object-fit:cover}
+.tkf{display:inline-flex;align-items:center;justify-content:center;color:var(--muted);font-weight:600}
+.row .px{font-variant-numeric:tabular-nums}
+.legend .tk{margin-left:2px}
+.setTok .n .tk,.fc-h .tk{margin-right:8px}
 .n{font-weight:600}.s{color:var(--muted);font-size:13px}
 .r{text-align:right}
 .empty{padding:28px 0;color:var(--muted)}
@@ -371,9 +376,13 @@ const nfC=new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR'});
 const nfCs=new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR',minimumSignificantDigits:2,maximumSignificantDigits:4});
 const nfCc=new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR',notation:'compact',maximumFractionDigits:2});
 const nfQ=new Intl.NumberFormat('it-IT',{maximumFractionDigits:8});
+const nfPx=new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR',minimumFractionDigits:4,maximumFractionDigits:4});
+const nfPx6=new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR',minimumFractionDigits:6,maximumFractionDigits:6});
 const nfP=new Intl.NumberFormat('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2});
 const ok=v=>typeof v==='number'&&isFinite(v);
 const eur=v=>!ok(v)?'—':((Math.abs(v)>0&&Math.abs(v)<1)?nfCs:nfC).format(v);
+/* Prezzo unitario: 4 decimali (6 sotto 0,01 € per non mostrare 0,0000) */
+const eurPx=v=>!ok(v)?'—':(Math.abs(v)<0.01?nfPx6:nfPx).format(v);
 const eurS=v=>!ok(v)?'—':(v>0?'+':'')+eur(v);
 const eurC=v=>!ok(v)?'—':nfCc.format(v);
 const pct=v=>!ok(v)?'—':(v>0?'+':'')+nfP.format(v)+'%';
@@ -381,6 +390,21 @@ const qf=v=>!ok(v)?'—':nfQ.format(v);
 const cls=v=>!ok(v)?'':v>0?'up':v<0?'down':'';
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const safeImg=u=>(typeof u==='string'&&/^https:\/\//.test(u))?u:'';
+/* Logo del token: immagine salvata o di CoinGecko; se manca o non si carica, cerchio con l'iniziale. */
+function logo(h,m,px){
+  const u=safeImg(h&&h.thumb)||safeImg(m&&m.image), l=esc(String((h&&sym(h))||(h&&h.name)||'?').slice(0,1));
+  const sz=`width:${px}px;height:${px}px`;
+  return u?`<img class="tk" src="${esc(u)}" alt="" loading="lazy" referrerpolicy="no-referrer" style="${sz}" data-l="${l}">`
+          :`<span class="tk tkf" style="${sz};font-size:${Math.round(px*.45)}px">${l}</span>`;
+}
+document.addEventListener('error',e=>{
+  const t=e.target;
+  if(t&&t.tagName==='IMG'&&t.classList.contains('tk')){
+    const s=document.createElement('span'); s.className='tk tkf';
+    s.style.cssText=t.style.cssText+';font-size:'+Math.round((parseInt(t.style.width)||30)*.45)+'px';
+    s.textContent=t.dataset.l||'?'; t.replaceWith(s);
+  }
+},true);
 /* Fuso orario: "automatico" usa quello del browser, che può essere sbagliato se il paese
    ha cambiato orario di recente e il browser non ha ancora aggiornato i suoi dati.
    Con uno scostamento fisso l'app calcola l'ora da sé, in modo indipendente dal browser. */
@@ -482,15 +506,17 @@ async function fallbackMarket(ids){
     if(!vp){try{vp=JSON.parse(localStorage.getItem(KEY+'-pair-'+id)||'null');}catch(_){vp=null;}}
     if(!sy||(vp&&vp.none)||(M&&!M[sy+'EUR']&&!M[sy+'USDT'])){mancanti.push(id); continue;}
     try{
+      /* Prima la coppia in USDT (la piu' liquida) convertita con EURUSDT;
+         la coppia in euro solo se manca quella in USDT: le coppie EUR poco scambiate
+         possono avere un ultimo prezzo lontano dal mercato. */
       let r=null;
-      if(!M||M[sy+'EUR']){try{r=await bnTicker(sy+'EUR');}catch(_){r=null;}}
-      if(!r){
-        const u=await bnTicker(sy+'USDT');
-        if(!fx) fx=await bnTicker('EURUSDT');
-        r={p:u.p/fx.p,ch:u.ch};
+      if(!M||M[sy+'USDT']){
+        try{const u=await bnTicker(sy+'USDT'); if(!fx) fx=await bnTicker('EURUSDT'); r={p:u.p/fx.p,ch:u.ch};}
+        catch(_){r=null;}
       }
+      if(!r) r=await bnTicker(sy+'EUR');
       m[id]={id,current_price:r.p,price_change_percentage_24h:r.ch,
-        price_change_percentage_24h_in_currency:r.ch,image:h.thumb||'',_src:'binance'};
+        price_change_percentage_24h_in_currency:r.ch,image:h.thumb||(market[id]&&market[id].image)||'',_src:'binance'};
     }catch(e){mancanti.push(id);}
   }
   return {m,mancanti};
@@ -535,6 +561,10 @@ async function refreshMarket(){
         rows.forEach(r=>{if(r&&r.id) m[r.id]=r;});
       }
       market=m; lastOk=Date.now(); srcFallback=false;
+      /* Salva l'icona nel token: resta visibile anche con i prezzi di riserva. */
+      let icone=false;
+      ids.forEach(id=>{const h=state.holdings[id]; if(h&&!h.thumb&&m[id]&&m[id].image){h.thumb=m[id].image; icone=true;}});
+      if(icone) save();
       try{localStorage.setItem(KEY+'-mkt',JSON.stringify({t:lastOk,m}));}catch(e){}
       const missing=ids.filter(id=>!m[id]);
       if(missing.length) setStatus('warn',`Aggiornato alle ${clock(lastOk)}. Senza prezzo: ${missing.map(id=>sym(state.holdings[id])||id).join(', ')}`);
@@ -651,16 +681,15 @@ function renderHome(){
   const tot=priced.reduce((a,r)=>a+r.value,0);
   if(tot>0){$('#alloc').hidden=false; drawDonut(priced,tot,ids.length);} else $('#alloc').hidden=true;
   list.innerHTML=rows.map(r=>{
-    const img=safeImg(r.h.thumb||(r.m&&r.m.image));
     return `<button class="row" type="button" data-id="${esc(r.id)}">
-      ${img?`<img src="${esc(img)}" alt="" loading="lazy">`:'<span class="ph"></span>'}
-      <span><span class="n">${esc(r.h.name)}</span><br><span class="s">${qf(r.qty)} ${esc(sym(r.h))}</span></span>
+      ${logo(r.h,r.m,34)}
+      <span><span class="n">${esc(r.h.name)}</span><br><span class="s">${qf(r.qty)} ${esc(sym(r.h))}</span><br><span class="s px">${eurPx(r.price)}</span></span>
       <span class="r"><span class="n" style="font-size:16.5px">${eur(r.value)}</span><br><span class="pill ${cls(r.pnlPct)}">${pct(r.pnlPct)}</span></span>
     </button>`;
   }).join('');
 }
 function drawDonut(rows,tot,count){
-  const segs=rows.slice(0,6).map((r,i)=>({name:sym(r.h)||r.h.name,v:r.value,c:COLORS[i]}));
+  const segs=rows.slice(0,6).map((r,i)=>({name:sym(r.h)||r.h.name,v:r.value,c:COLORS[i],h:r.h,m:r.m}));
   const rest=rows.slice(6);
   if(rest.length) segs.push({name:`Altri (${rest.length})`,v:rest.reduce((a,r)=>a+r.value,0),c:OTHER});
   const R=52,C=2*Math.PI*R; let off=0;
@@ -672,7 +701,7 @@ function drawDonut(rows,tot,count){
   });
   svg+=`<text x="70" y="75" text-anchor="middle" font-size="14" font-weight="600" fill="var(--text)">${count} token</text></svg>`;
   $('#donut').innerHTML=svg;
-  $('#legend').innerHTML=segs.map(s=>`<li><span class="sw" style="background:${s.c}"></span><span>${esc(s.name)}</span><span class="w">${nfP.format(s.v/tot*100)}%</span></li>`).join('');
+  $('#legend').innerHTML=segs.map(s=>`<li><span class="sw" style="background:${s.c}"></span>${s.h?logo(s.h,s.m,18):''}<span>${esc(s.name)}</span><span class="w">${nfP.format(s.v/tot*100)}%</span></li>`).join('');
 }
 
 const kv=(l,v,c='')=>`<div><dt>${l}</dt><dd class="${c}">${v}</dd></div>`;
@@ -692,7 +721,7 @@ function renderDetail(){
     destroyChart(); lastChart=null; el.dataset.key=id;
     const img=safeImg(m.image||h.thumb);
     el.innerHTML=`<button class="link" id="back" type="button">‹ Portafoglio</button>
-    <div class="dh">${img?`<img src="${esc(img)}" alt="">`:''}<div><h1>${esc(h.name)}</h1><div class="s" id="dSub"></div></div></div>
+    <div class="dh">${logo(h,m,40)}<div><h1>${esc(h.name)}</h1><div class="s" id="dSub"></div></div></div>
     <div class="price" id="dPrice"></div>
     <div id="cw" class="cw">
       <div class="fsbal" id="fsBal" aria-live="polite"></div>
@@ -1384,7 +1413,7 @@ function renderForecast(noKick){
   const cards=ids.map(id=>{
     const h=state.holdings[id], m=market[id]||{}, c=taLoadCache(id);
     const img=safeImg(m.image||h.thumb);
-    const top=`<div class="fc-h">${img?`<img src="${esc(img)}" alt="">`:''}<div><span class="n">${esc(h.name)}</span><br><span class="s">${esc(sym(h))}</span></div>`;
+    const top=`<div class="fc-h">${logo(h,m,28)}<div><span class="n">${esc(h.name)}</span><br><span class="s">${esc(sym(h))}</span></div>`;
     const open=`<button class="link" type="button" data-open="${esc(id)}">Apri grafico ›</button>`;
     if(!c) return `<div class="fc">${top}<span class="badge m">In attesa</span></div>${open}</div>`;
     if(c.err) return `<div class="fc">${top}<span class="badge m">Non disponibile</span></div><p class="m small" style="margin:8px 0 0">${esc(c.err)}</p>${open}</div>`;
@@ -1557,7 +1586,7 @@ function settingsHtml(){
   return `<details class="set" id="setBox"${open?' open':''}><summary>Impostazioni costi e fonti${miss?' <span class="side">(da completare)</span>':''}</summary>
     <p class="intro">Inserisci i valori reali che vedi nell’app Revolut X e nella Tangem. Senza questi dati l’app non calcola se un’operazione conviene.</p>
     <label>Commissione Revolut X per operazione (%)<input class="inp" data-set="fee" inputmode="decimal" autocomplete="off" value="${num(settings.fee)}"></label>
-    ${ids.map(id=>{const h=state.holdings[id], T=settings.tok[id]||{}, s=esc(sym(h)); return `<div class="setTok"><div class="n">${esc(h.name)}</div>
+    ${ids.map(id=>{const h=state.holdings[id], T=settings.tok[id]||{}, s=esc(sym(h)); return `<div class="setTok"><div class="n">${logo(h,market[id],22)}${esc(h.name)}</div>
       <label>Costo di invio dalla Tangem a Revolut X (in ${s})<input class="inp" data-tok="${esc(id)}" data-k="dep" inputmode="decimal" autocomplete="off" value="${num(T.dep)}"></label>
       <label>Commissione di prelievo da Revolut X alla Tangem (in ${s})<input class="inp" data-tok="${esc(id)}" data-k="wd" inputmode="decimal" autocomplete="off" value="${num(T.wd)}"></label></div>`;}).join('')}
     <label>Budget mensile per nuovi acquisti (€, facoltativo)<input class="inp" data-set="budget" inputmode="decimal" autocomplete="off" value="${num(settings.budget)}"></label>
@@ -1660,7 +1689,7 @@ function renderTips(noKick){
   const tip=TIPS[dayN%TIPS.length];
   const plans=ids.map(id=>{
     const P=accPlan(id);
-    const head=`<div class="fc-h"><div><span class="n">${esc(P.h.name)}</span><br><span class="s">${esc(sym(P.h))}</span></div>`;
+    const head=`<div class="fc-h">${logo(P.h,market[P.h.id],28)}<div><span class="n">${esc(P.h.name)}</span><br><span class="s">${esc(sym(P.h))}</span></div>`;
     if(P.wait) return `<div class="fc">${head}</div><p class="m small" style="margin:8px 0 0">${esc(P.wait)}</p></div>`;
     let sw;
     if(!P.swing) sw='<div class="inv"><span class="n">Vendere per ricomprare:</span> non conviene ora. Per accumulare, tieni i token sulla Tangem.</div>';
@@ -1689,7 +1718,7 @@ function renderTips(noKick){
     const top=rows[0], w=top.value/t.value*100;
     if(w>=50) checks.push(['Concentrazione alta',`${top.h.name} pesa il ${nfP.format(w)}% del portafoglio: se scendesse del 30%, il totale perderebbe circa il ${nfP.format(w*0.3)}%.`]);
   }
-  rows.filter(r=>r.m&&(!r.m.market_cap_rank||r.m.market_cap_rank>200)).forEach(r=>checks.push(['Token a bassa capitalizzazione',`${r.h.name} ${r.m.market_cap_rank?'è al rank #'+r.m.market_cap_rank:'non ha un rank'}: liquidità e volatilità possono essere estreme.`]));
+  rows.filter(r=>r.m&&r.m._src!=='binance'&&(!r.m.market_cap_rank||r.m.market_cap_rank>200)).forEach(r=>checks.push(['Token a bassa capitalizzazione',`${r.h.name} ${r.m.market_cap_rank?'è al rank #'+r.m.market_cap_rank:'non ha un rank'}: liquidità e volatilità possono essere estreme.`]));
   if(t.missing) checks.push(['Prezzi mancanti',`${t.missing} token senza prezzo: saldo e piani sono incompleti.`]);
   if(ids.length&&settingsMissing()) checks.push(['Commissioni mancanti','Completa le Impostazioni: senza commissioni i calcoli su trasferimenti e “vendi e ricompra” non sono affidabili.']);
   let last=0; try{last=+localStorage.getItem(KEY+'-lastExport')||0;}catch(e){}
